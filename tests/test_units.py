@@ -20,7 +20,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from jybridge import audit, draftio, paths, plain, pull, retime, send, snapshot, write  # noqa: E402
+from jybridge import audit, draftio, paths, plain, pull, resolve, retime, send, snapshot, write  # noqa: E402
 
 # ---------------------------------------------------------------- 夹具
 
@@ -1660,6 +1660,45 @@ class TestReadFallsBack(unittest.TestCase):
         msg = draftio.no_plaintext_message(self.cur)
         self.assertIn("又被编辑过", msg)
         self.assertIn("重新打开", msg)
+
+
+# ---------------------------------------------------------------- 达芬奇 API 延迟加载
+#
+# 2026-11-20 的 CI 教训：顶层 `import DaVinciResolveScript` 会让「没装达芬奇」的机器
+# 连 `import jybridge.send` 都失败。这三条钉住「不用 API 的功能必须在裸机上可用」。
+
+class TestResolveLazy(unittest.TestCase):
+    def test_all_modules_import_without_resolve(self):
+        """子进程里把搜索路径清空，模拟没装达芬奇的机器。"""
+        import subprocess
+        code = (
+            "import jybridge.resolve as r; r.MOD_DIRS = () ;"
+            "import jybridge.send, jybridge.pull, jybridge.preflight, jybridge.lock,"
+            " jybridge.audit, jybridge.workflow, jybridge.draftbuild;"
+            "assert r.available() is False;"
+            "print('ok')"
+        )
+        out = subprocess.run([sys.executable, "-c", code], cwd=str(ROOT),
+                             capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, (out.stderr or "")[-800:])
+        self.assertIn("ok", out.stdout)
+
+    def test_loud_error_when_api_missing(self):
+        saved_dirs, saved = resolve.MOD_DIRS, resolve._loaded
+        resolve.MOD_DIRS, resolve._loaded = (), None
+        try:
+            with self.assertRaises(resolve.ResolveUnavailable) as ctx:
+                resolve.load()
+            self.assertIn("check", str(ctx.exception))     # 告诉人哪些命令不受影响
+        finally:
+            resolve.MOD_DIRS, resolve._loaded = saved_dirs, saved
+
+    def test_proxy_is_patchable_without_resolve(self):
+        """测试里 patch `send.dvr.scriptapp` 不能反过来要求先装达芬奇。"""
+        sentinel = mock.Mock()
+        with mock.patch.object(send.dvr, "scriptapp", return_value=sentinel) as m:
+            self.assertIs(send.dvr.scriptapp("Resolve"), sentinel)
+            self.assertEqual(m.call_count, 1)
 
 
 if __name__ == "__main__":

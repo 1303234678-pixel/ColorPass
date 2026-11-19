@@ -17,17 +17,12 @@
 达芬奇里写。宁可让用户多点一次「新建工程」，也不动他已有的东西。
 """
 import os
-import sys
 import time
 
-from . import paths
+from . import paths, resolve
 
-MOD = (r"C:/ProgramData/Blackmagic Design/DaVinci Resolve/Support/Developer"
-       r"/Scripting/Modules")
-if MOD not in sys.path:
-    sys.path.insert(0, MOD)
-
-import DaVinciResolveScript as dvr  # noqa: E402
+# 延迟加载：没装达芬奇的机器照样能 import 本模块（check / plan 不需要 API）。
+dvr = resolve.lazy()
 
 
 class Gate(Exception):

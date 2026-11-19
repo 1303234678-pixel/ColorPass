@@ -5,14 +5,12 @@
   · 锁定后 SetCDL / ExportLUT 完全不受影响 —— 调色照常
 """
 import os
-import sys
 import time
 
-from . import draftio, paths
+from . import draftio, paths, resolve
 
-MOD = r"C:/ProgramData/Blackmagic Design/DaVinci Resolve/Support/Developer/Scripting/Modules"
-sys.path.insert(0, MOD)
-import DaVinciResolveScript as dvr  # noqa: E402
+# 延迟加载：没装达芬奇的机器照样能 import 本模块（check / plan 不需要 API）。
+dvr = resolve.lazy()
 
 
 def run(state="on"):

@@ -16,7 +16,7 @@
 import os
 from pathlib import Path
 
-from . import draftio, paths
+from . import draftio, paths, resolve
 
 FPS = paths.FPS
 
@@ -255,15 +255,10 @@ def scan_draft(draft, deep=False, speed_mode="bake"):
 
 def scan_resolve():
     """达芬奇侧体检。连不上就返回 available=False，不算错。"""
-    import sys
-    mod = (r"C:/ProgramData/Blackmagic Design/DaVinci Resolve/Support/Developer"
-           r"/Scripting/Modules")
-    if mod not in sys.path:
-        sys.path.insert(0, mod)
     try:
-        import DaVinciResolveScript as dvr
-    except Exception as e:
-        return {"available": False, "why": "脚本模块导入失败：%s" % e}
+        dvr = resolve.load()
+    except resolve.ResolveUnavailable as e:
+        return {"available": False, "why": "脚本模块导入失败：%s" % str(e).splitlines()[0]}
     try:
         r = dvr.scriptapp("Resolve")
     except Exception as e:

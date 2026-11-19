@@ -168,7 +168,7 @@ python -m unittest discover -s tests -p "test_*.py"
 python -m ruff check jybridge tests
 ```
 
-308 个离线测试，不依赖达芬奇、不依赖剪映、不动任何真实草稿。
+311 个离线测试，不依赖达芬奇、不依赖剪映、不动任何真实草稿。
 
 ## 许可证
 
