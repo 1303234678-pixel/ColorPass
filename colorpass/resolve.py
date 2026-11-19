@@ -1,7 +1,7 @@
 """达芬奇脚本 API 的按需加载。
 
 **不要在模块顶层 `import DaVinciResolveScript`。** 那个模块只存在于装了达芬奇
-的机器上，放在顶层会让 `import jybridge.send` 在没有达芬奇的机器上直接炸——
+的机器上，放在顶层会让 `import colorpass.send` 在没有达芬奇的机器上直接炸——
 CI、只想跑 `check` / `plan` 的人、单纯 `pip install` 看一眼的人，全都会被挡在门外。
 
 这里改成延迟导入：模块级只拿一个代理对象，真正访问 `dvr.scriptapp(...)` 时才去找

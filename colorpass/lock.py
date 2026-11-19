@@ -48,10 +48,11 @@ def run(state="on"):
                         else "轨道当前未锁 —— 可改剪辑，但改完需重新送入。"))
         marks = tl.GetMarkers() or {}
         for k, v in marks.items():
-            if (v or {}).get("name") == "BRIDGE":
+            # "BRIDGE" 是改名前的说明标记，见到就顺手清掉
+            if (v or {}).get("name") in ("ColorPass", "BRIDGE"):
                 tl.DeleteMarkerAtFrame(int(k))
                 break
-        tl.AddMarker(0, "Purple", "BRIDGE", note_text, 1)
+        tl.AddMarker(0, "Purple", "ColorPass", note_text, 1)
         rep["note"] = note_text
     except Exception as e:
         rep["note_error"] = str(e)

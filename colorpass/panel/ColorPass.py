@@ -1,4 +1,4 @@
-"""JYBridge · 剪映 ⇄ 达芬奇 往返（精简版）
+"""ColorPass · 剪映 ⇄ 达芬奇 往返（精简版）
 
 只做一件事：**把剪映的剪辑送进达芬奇，调完色再写回一份新草稿。**
 
@@ -12,13 +12,13 @@
 
 线程模型（沿用实测结论，别改）：
   Fusion 的 UIDispatcher 没有 AddTimer，RunLoop 还会抢 GIL，所以面板只能
-  单线程 StepLoop 轮询；真正的活在子进程里干（`python -m jybridge.cli ...`），
+  单线程 StepLoop 轮询；真正的活在子进程里干（`python -m colorpass.cli ...`），
   面板只负责起进程、读它写出来的结果文件。
   `cli status` 也放后台线程跑 —— 剪映内存读不出来时它会挂到超时，
   放主循环里就是整窗卡死（旧版实测过）。
 
 安装：
-    python -m jybridge.install
+    python -m colorpass.install
 """
 import glob
 import json
@@ -33,15 +33,15 @@ import traceback
 #
 # 这两个值以前是写死的绝对路径 —— 只有作者本机能跑。开源后必须自动定位：
 #
-#   python    JYBRIDGE_PYTHON → config.json 的 python → 常见安装位置（取版本最高）
+#   python    COLORPASS_PYTHON → config.json 的 python → 常见安装位置（取版本最高）
 #             → PATH 上的 python
-#   product   有 jybridge/cli.py 的目录：JYBRIDGE_HOME → config.json 的 product
-#             → %LOCALAPPDATA%\JYBridge\product → 当前目录
+#   product   有 colorpass/cli.py 的目录：COLORPASS_HOME → config.json 的 product
+#             → %LOCALAPPDATA%\ColorPass\product → 当前目录
 #
-# config.json 由 `python -m jybridge.install` 写，里面记着「装的时候用的是谁」。
+# config.json 由 `python -m colorpass.install` 写，里面记着「装的时候用的是谁」。
 # 这样 pip 安装、克隆源码、绿色解压三种情况都能对上，不用改代码。
 BASE_DIR = os.path.join(os.environ.get("LOCALAPPDATA")
-                        or os.path.expanduser("~"), "JYBridge")
+                        or os.path.expanduser("~"), "ColorPass")
 CONF_PATH = os.path.join(BASE_DIR, "config.json")
 
 
@@ -55,12 +55,12 @@ def _conf():
 
 
 def _is_product(p):
-    return bool(p) and os.path.isfile(os.path.join(p, "jybridge", "cli.py"))
+    return bool(p) and os.path.isfile(os.path.join(p, "colorpass", "cli.py"))
 
 
 def _find_product():
     conf = _conf()
-    cands = [os.environ.get("JYBRIDGE_HOME"), conf.get("product"),
+    cands = [os.environ.get("COLORPASS_HOME"), conf.get("product"),
              os.path.join(BASE_DIR, "product"), os.getcwd()]
     for c in cands:
         if _is_product(c):
@@ -75,7 +75,7 @@ def _ver_key(path):
 
 def _find_python():
     conf = _conf()
-    for c in (os.environ.get("JYBRIDGE_PYTHON"), conf.get("python")):
+    for c in (os.environ.get("COLORPASS_PYTHON"), conf.get("python")):
         if c and os.path.isfile(c):
             return c
     pats = [
@@ -95,19 +95,19 @@ def _find_python():
 
 PY = _find_python()
 PRODUCT = _find_product()
-# 面板自己的日志与子进程输出放在 %LOCALAPPDATA%\JYBridge\panel\
+# 面板自己的日志与子进程输出放在 %LOCALAPPDATA%\ColorPass\panel\
 # 不再借用 drx\generated\ —— 那个目录属于已移除的一级调色插件。
 OUT = os.path.join(BASE_DIR, "panel")
-LOG = os.path.join(OUT, "jybridge_panel.log")
+LOG = os.path.join(OUT, "colorpass_panel.log")
 NO_WIN = 0x08000000
 
 # 找不到源码目录时，面板唯一的正确动作是「说清楚怎么修」，而不是弹一个
 # 子进程报错让人去猜。三条路按从省事到麻烦排。
 _NO_PRODUCT = (
-    "找不到 JYBridge 源码目录（需要包含 jybridge/cli.py）。\n\n"
+    "找不到 ColorPass 源码目录（需要包含 colorpass/cli.py）。\n\n"
     "任选一种：\n"
-    "  1) 在克隆下来的目录里运行  python -m jybridge.install\n"
-    "  2) 设环境变量 JYBRIDGE_HOME 指向那个目录\n"
+    "  1) 在克隆下来的目录里运行  python -m colorpass.install\n"
+    "  2) 设环境变量 COLORPASS_HOME 指向那个目录\n"
     "  3) 或用 pip 安装后重新运行一次 install\n\n"
     "装好后重启达芬奇。")
 
@@ -134,7 +134,7 @@ def human_bytes(n):
     """12345678 → 11.8 MB。
 
     面板跑在达芬奇的 Fusion 进程里，sys.path 上没有这个工程，所以不能
-    `from jybridge import gc` —— 这份格式化函数就在本地留一份。
+    `from colorpass import gc` —— 这份格式化函数就在本地留一份。
     """
     if n is None or n == "":
         return "—"
@@ -294,7 +294,7 @@ class Panel(object):
             self.ui.Label({"ID": "jybResult", "Text": "", "Weight": 0,
                            "WordWrap": True}),
         ]
-        title = "JYBridge · 剪映 ↔ 达芬奇"
+        title = "ColorPass · 剪映 ↔ 达芬奇"
         self.win = self.disp.AddWindow(
             {"ID": WIN_ID, "Geometry": [180, 90, 580, 372],
              "WindowTitle": title}, self.ui.VGroup(rows))
@@ -447,7 +447,7 @@ class Panel(object):
         else:
             try:
                 r = subprocess.run(
-                    [PY, "-m", "jybridge.cli", "status"], cwd=PRODUCT,
+                    [PY, "-m", "colorpass.cli", "status"], cwd=PRODUCT,
                     capture_output=True, text=True, timeout=STATUS_TIMEOUT,
                     creationflags=NO_WIN, encoding="utf-8", errors="replace",
                     env=ENV)
@@ -505,7 +505,7 @@ class Panel(object):
     def _cache_line(self, rep):
         """缓存行文案：只报「真能删掉的量」，不报目录总占用。
 
-        这里踩过坑。原来显示的是整个 %LOCALAPPDATA%\\JYBridge 的大小，而里面
+        这里踩过坑。原来显示的是整个 %LOCALAPPDATA%\\ColorPass 的大小，而里面
         大头是**按设计就不能删**的东西：runs 里写回要用的底稿快照、当前草稿
         的 cube、最近几份草稿的痕迹。于是面板写着「缓存 253 MB」，点清理却
         0 项、数字纹丝不动，用户只能认定按钮坏了。现在显示的每一笔都是按钮
@@ -535,7 +535,7 @@ class Panel(object):
         if not rep:
             # 配置类错误（找不到源码目录）要原样显示 —— 它本身就是修复步骤，
             # 塞进「详见日志」等于让用户去翻一个他不知道为什么存在的文件。
-            if err and err.startswith("找不到 JYBridge"):
+            if err and err.startswith("找不到 ColorPass"):
                 self.say_r(err)
             else:
                 self.say_r("读取草稿状态失败（详见 %s）" % LOG)
@@ -609,7 +609,7 @@ class Panel(object):
         except Exception as exc:
             self.say_r("无法写结果文件：%s" % exc)
             return
-        cmd = [PY, "-m", "jybridge.cli", action] + list(extra or [])
+        cmd = [PY, "-m", "colorpass.cli", action] + list(extra or [])
         try:
             proc = subprocess.Popen(cmd, cwd=PRODUCT, stdout=f,
                                     stderr=subprocess.STDOUT,
@@ -863,7 +863,7 @@ class Panel(object):
         try:
             dlg = self.disp.AddWindow(
                 {"ID": wid, "Geometry": [280, 190, 620, height],
-                 "WindowTitle": "JYBridge · " + title},
+                 "WindowTitle": "ColorPass · " + title},
                 self.ui.VGroup([
                     self.ui.Label({"ID": "dMsg", "Text": body, "WordWrap": True,
                                    "Weight": 1}),

@@ -25,7 +25,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from jybridge import paths, send, snapshot  # noqa: E402
+from colorpass import paths, send, snapshot  # noqa: E402
 
 FPS = paths.FPS
 
@@ -90,7 +90,7 @@ class FakeMediaItem(object):
 
 
 class FakeTimeline(object):
-    def __init__(self, name="JY · 测试"):
+    def __init__(self, name="CP · 测试"):
         self.name = name
         self.tracks = {"video": {}, "audio": {}}
         self.locks = {}
@@ -348,7 +348,7 @@ class SendBase(unittest.TestCase):
         self.resolve = FakeResolve()
         # 真代码里有几处「等达芬奇缓过来」的 sleep（各 0.4~0.5 秒），
         # 测试里没必要真等，否则 18 个用例要跑 15 秒。
-        self._sleep = mock.patch("jybridge.send.time.sleep", return_value=None)
+        self._sleep = mock.patch("colorpass.send.time.sleep", return_value=None)
         self._sleep.start()
 
     def tearDown(self):
@@ -647,7 +647,7 @@ class TestSendSpeed(SendBase):
 
     def test_speed_bake_without_ffmpeg_falls_back(self):
         d = draft_video(1)
-        with mock.patch("jybridge.retime.available", return_value=False):
+        with mock.patch("colorpass.retime.available", return_value=False):
             rep = self.run_send(d, speed="bake")
         self.assertEqual(rep["speed_mode"], "slot")
         self.assertIn("ffmpeg", rep["speed_fallback"])
@@ -670,8 +670,8 @@ class TestSendSpeed(SendBase):
 
         # 显式声明「这台机器有 ffmpeg」：否则没装 ffmpeg 的环境（CI）会先退回
         # slot 模式，根本走不到预渲染，这条用例就成了环境探测器。
-        with mock.patch("jybridge.retime.available", return_value=True), \
-                mock.patch("jybridge.retime.bake_plan",
+        with mock.patch("colorpass.retime.available", return_value=True), \
+                mock.patch("colorpass.retime.bake_plan",
                            side_effect=fake_bake_plan):
             rep = self.run_send(d, speed="bake")
         self.assertTrue(rep["ok"], rep.get("error"))
@@ -820,35 +820,35 @@ class TestTimelineNaming(unittest.TestCase):
         self.mp = self.proj.pool
 
     def test_fresh_name(self):
-        tl, used, tried, _notes = send.create_timeline(self.mp, self.proj, "JY · A")
+        tl, used, tried, _notes = send.create_timeline(self.mp, self.proj, "CP · A")
         self.assertIsNotNone(tl)
-        self.assertEqual(used, "JY · A")
-        self.assertEqual(tried, ["JY · A"])
+        self.assertEqual(used, "CP · A")
+        self.assertEqual(tried, ["CP · A"])
 
     def test_empty_same_name_reused(self):
-        self.mp.CreateEmptyTimeline("JY · A")
+        self.mp.CreateEmptyTimeline("CP · A")
         self.proj.current = None
-        tl, used, _tried, notes = send.create_timeline(self.mp, self.proj, "JY · A")
-        self.assertEqual(used, "JY · A")
+        tl, used, _tried, notes = send.create_timeline(self.mp, self.proj, "CP · A")
+        self.assertEqual(used, "CP · A")
         self.assertEqual(self.proj.GetTimelineCount(), 1,
                          "空的重名应该删掉复用，不该堆两条")
         self.assertTrue(any("清理了空时间线" in n for n in notes))
 
     def test_nonempty_same_name_gets_suffix(self):
-        old = self.mp.CreateEmptyTimeline("JY · A")
+        old = self.mp.CreateEmptyTimeline("CP · A")
         old.tracks["video"] = {1: [FakeClip(0, 10, None)]}
-        tl, used, _tried, notes = send.create_timeline(self.mp, self.proj, "JY · A")
-        self.assertEqual(used, "JY · A (2)")
+        tl, used, _tried, notes = send.create_timeline(self.mp, self.proj, "CP · A")
+        self.assertEqual(used, "CP · A (2)")
         self.assertEqual(self.proj.GetTimelineCount(), 2, "旧时间线必须留着")
         self.assertTrue(any("已有 1 个片段" in n for n in notes))
 
     def test_never_overwrites_colored_timeline(self):
         """同名有内容时，宁可换名也不能动旧时间线 —— 那可能是已调色的成果。"""
-        old = self.mp.CreateEmptyTimeline("JY · A")
+        old = self.mp.CreateEmptyTimeline("CP · A")
         old.tracks["video"] = {1: [FakeClip(0, 10, None)]}
-        send.create_timeline(self.mp, self.proj, "JY · A")
+        send.create_timeline(self.mp, self.proj, "CP · A")
         self.assertIn(old, self.proj.timelines)
-        self.assertEqual(old.GetName(), "JY · A")
+        self.assertEqual(old.GetName(), "CP · A")
         self.assertEqual(old.tracks["video"][1][0].dur, 10)
 
 

@@ -39,7 +39,7 @@ def _cover(dst, src_png=None):
                                                               Image.LANCZOS)
         else:
             im = Image.new("RGB", (640, 360), (28, 28, 32))
-            ImageDraw.Draw(im).text((24, 168), "JYBridge", fill=(210, 210, 216))
+            ImageDraw.Draw(im).text((24, 168), "ColorPass", fill=(210, 210, 216))
         im.save(dst, quality=90)
         return True
     except Exception:

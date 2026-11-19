@@ -19,7 +19,7 @@ SetRetimeSpeed / SetClipSpeed / Timeline.SetClipsSpeed 等 11 个候选全是 No
 摆进达芬奇时它就是普通 1x 素材 —— 时长、内容、帧号全部和剪映一致，调色结果
 也能原样回写。
 
-成本：每段编码一次，落在 %LOCALAPPDATA%\\JYBridge\\retime\\<草稿ID>\\。
+成本：每段编码一次，落在 %LOCALAPPDATA%\\ColorPass\\retime\\<草稿ID>\\。
 同一段（路径+区间+速度）只编一次，重复送入直接复用。
 """
 import os
@@ -166,7 +166,7 @@ def clean(draft_id=None):
 
     draft_id 必须先过白名单。它来自命令行，而 `paths.retime_dir` 会
     `os.path.join` 后 `makedirs`，再被 `shutil.rmtree` ——
-    一个 `--draft-id ..` 就会把 `%LOCALAPPDATA%\JYBridge` 整个删掉
+    一个 `--draft-id ..` 就会把 `%LOCALAPPDATA%\ColorPass` 整个删掉
     （current.json、所有 runs 快照、日志全在里面），`..\..` 更是直接
     打到 `%LOCALAPPDATA%`。
     """

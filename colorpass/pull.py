@@ -1,7 +1,7 @@
 """达芬奇 → 剪映：逐段 ExportLUT，按 marker 里的 segment_id 归位。
 
 与上一版的差别（都是为了「cube 不丢」）：
-  1. cube 落到 %LOCALAPPDATA%\\JYBridge\\luts\\<草稿ID>\\，不再是会话工作区
+  1. cube 落到 %LOCALAPPDATA%\\ColorPass\\luts\\<草稿ID>\\，不再是会话工作区
   2. 每个 cube 导出后立即校验：文件存在、33³、非空、对角线可读
   3. 写 manifest.json（段号→文件→字节数→白点），写回时按它对账
   4. 对齐校验不通过就不导（沿用：宁可不写，也不挂错段）
@@ -150,7 +150,7 @@ def run(draft_id=None):
     if ptr.get("_incomplete"):
         rep["error"] = ("最近一次「送入达芬奇」没有走完（%s 开始，时间线可能只摆了"
                         "一半），取回会得到不完整的 LUT 表。请重新送入；"
-                        "要按上一次成功的版本取回，先执行 `jybridge reset`。"
+                        "要按上一次成功的版本取回，先执行 `colorpass reset`。"
                         % (ptr.get("pending_at") or "上一轮"))
         return rep
     did = ptr.get("draft_id")

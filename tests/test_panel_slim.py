@@ -3,7 +3,7 @@
 为什么要这份测试
 ----------------
 面板是整个插件唯一「用户直接摸得到」的一层，但它以前一条测试都没有 ——
-因为 `JYBridge.py` 末尾会直接 `main()`，一 import 就弹窗。这里把源码读进来、
+因为 `ColorPass.py` 末尾会直接 `main()`，一 import 就弹窗。这里把源码读进来、
 截掉末尾自启动，再用假的 `fusion` / `bmd` / `subprocess` 把 UI 与子进程顶掉，
 于是构造、按钮回调、状态刷新都能在 CI 里跑。
 
@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-PANEL = Path(__file__).resolve().parent.parent / "jybridge" / "panel" / "JYBridge.py"
+PANEL = Path(__file__).resolve().parent.parent / "colorpass" / "panel" / "ColorPass.py"
 
 
 # ---------------------------------------------------------------- 假 UI
@@ -219,18 +219,18 @@ class PanelSlimTest(unittest.TestCase):
     # ---- 装在哪、用哪个解释器（开源后不能再写死绝对路径） ----
     def test_product_resolves_from_env(self):
         root = str(Path(__file__).resolve().parents[1])
-        with mock.patch.dict(os.environ, {"JYBRIDGE_HOME": root}):
+        with mock.patch.dict(os.environ, {"COLORPASS_HOME": root}):
             ns = load_panel()
         self.assertEqual(ns["PRODUCT"], root)
-        self.assertTrue(os.path.isfile(os.path.join(root, "jybridge", "cli.py")))
+        self.assertTrue(os.path.isfile(os.path.join(root, "colorpass", "cli.py")))
 
     def test_missing_product_tells_how_to_fix(self):
-        with mock.patch.dict(os.environ, {"JYBRIDGE_HOME": "",
-                                          "JYBRIDGE_PYTHON": ""}), \
+        with mock.patch.dict(os.environ, {"COLORPASS_HOME": "",
+                                          "COLORPASS_PYTHON": ""}), \
                 mock.patch("os.getcwd", return_value="C:/definitely/not/here"):
             ns = load_panel()
         self.assertEqual(ns["PRODUCT"], "")
-        self.assertIn("python -m jybridge.install", ns["_NO_PRODUCT"])
+        self.assertIn("python -m colorpass.install", ns["_NO_PRODUCT"])
 
     def test_python_always_resolves_to_something(self):
         ns = load_panel()
@@ -238,7 +238,7 @@ class PanelSlimTest(unittest.TestCase):
 
     def test_job_refuses_without_product(self):
         """找不到源码目录时，子进程一个都不许起。"""
-        with mock.patch.dict(os.environ, {"JYBRIDGE_HOME": ""}), \
+        with mock.patch.dict(os.environ, {"COLORPASS_HOME": ""}), \
                 mock.patch("os.getcwd", return_value="C:/definitely/not/here"):
             ns, p = make_panel(payload=STATUS_OK)
             p.start_job("send", "送入")
@@ -508,10 +508,10 @@ class PanelSlimTest(unittest.TestCase):
 
     def test_summary_send(self):
         s = load_panel()["Panel"]._summary(
-            "send", {"placed": 3, "exact": 3, "timeline": "JY · 11月18日",
+            "send", {"placed": 3, "exact": 3, "timeline": "CP · 11月18日",
                      "speed_mode": "bake"})
         self.assertIn("3 段", s)
-        self.assertIn("JY · 11月18日", s)
+        self.assertIn("CP · 11月18日", s)
 
     def test_summary_write(self):
         s = load_panel()["Panel"]._summary(
@@ -521,13 +521,13 @@ class PanelSlimTest(unittest.TestCase):
 
     def test_summary_send_mentions_disabled(self):
         s = load_panel()["Panel"]._summary(
-            "send", {"placed": 3, "exact": 3, "timeline": "JY · 草稿",
+            "send", {"placed": 3, "exact": 3, "timeline": "CP · 草稿",
                      "speed_mode": "bake", "disabled": 1})
         self.assertIn("停用段 1 段", s)
 
     def test_summary_send_silent_when_no_disabled(self):
         s = load_panel()["Panel"]._summary(
-            "send", {"placed": 3, "exact": 3, "timeline": "JY · 草稿"})
+            "send", {"placed": 3, "exact": 3, "timeline": "CP · 草稿"})
         self.assertNotIn("停用", s)
 
     def test_summary_write_lists_what_survived(self):

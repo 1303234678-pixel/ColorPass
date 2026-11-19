@@ -121,7 +121,7 @@ def _unique_project_name(pm, base):
     return "%s %d" % (base, int(time.time()))
 
 
-def open_blank_project(r, base="JY Bridge"):
+def open_blank_project(r, base="ColorPass"):
     """在达芬奇里新建一个空白工程并进入，返回 (proj, name)。
 
     只在「没进任何工程」时用：此刻用户没在用达芬奇，新建工程不会打断工作。
@@ -183,9 +183,9 @@ def daVinci(tag=None, require_blank=True, auto_project=True):
             raise Gate("project_manager",
                        "达芬奇停在「项目管理器」，脚本接口还没进入任何工程。\n"
                        "请在达芬奇里打开一个**空白**工程（或「文件 → 新建工程」），"
-                       "然后重试；也可以运行 `jybridge newproj` 让工具自己建。",
+                       "然后重试；也可以运行 `colorpass newproj` 让工具自己建。",
                        {"product": product, "version": ver, "page": None})
-        _, created = open_blank_project(r, "JY Bridge")
+        _, created = open_blank_project(r, "ColorPass")
         page = r.GetCurrentPage()
 
     proj = pm.GetCurrentProject() if pm else None
@@ -200,14 +200,14 @@ def daVinci(tag=None, require_blank=True, auto_project=True):
         tl = proj.GetTimelineByIndex(i)
         nm = (tl.GetName() or "") if tl else ""
         names.append(nm)
-        if not nm.startswith(tag):
+        if not paths.is_own_timeline(nm, tag):
             foreign.append(nm)
 
     info = {
         "product": product, "version": ver, "project": proj.GetName(),
         "timelines": names, "timeline_count": n_tl,
         "foreign_timelines": foreign,
-        "own_timelines": [nm for nm in names if nm.startswith(tag)],
+        "own_timelines": [nm for nm in names if paths.is_own_timeline(nm, tag)],
         "fps": proj.GetSetting("timelineFrameRate"),
         "width": proj.GetSetting("timelineResolutionWidth"),
         "height": proj.GetSetting("timelineResolutionHeight"),
@@ -216,7 +216,7 @@ def daVinci(tag=None, require_blank=True, auto_project=True):
     }
 
     if require_blank and foreign:
-        # 只拦「别人的时间线」。上一轮本工具建的 `JY · …` 不再拦 ——
+        # 只拦「别人的时间线」。上一轮本工具建的 `CP · …` 不再拦 ——
         # send 建时间线时会先找同名：空的删掉复用，有内容的自动加序号，
         # 不会覆盖已调色的成果（这两条都有用例钉住）。原来一刀切要求
         # 工程全空，导致第二轮送入必然失败，用户每次都得手动新建工程。
@@ -226,7 +226,7 @@ def daVinci(tag=None, require_blank=True, auto_project=True):
             "接着做会改动这个工程的帧率、并用绝对帧号往时间线上放片段，"
             "可能弄乱你正在剪的东西。\n"
             "请「文件 → 新建工程」建一个空工程再送入（或运行 "
-            "`jybridge newproj`，工具会自己建一个干净的）。"
+            "`colorpass newproj`，工具会自己建一个干净的）。"
             % (proj.GetName(), len(foreign),
                "、".join(foreign[:3]) + ("…" if len(foreign) > 3 else "")),
             info)
@@ -243,7 +243,7 @@ def daVinci(tag=None, require_blank=True, auto_project=True):
                 "fps_mismatch",
                 "工程「%s」现在是 %g fps，里面已经有本工具建的时间线。"
                 "改成 30 fps 会让那些时间线整体重算（已调好的片段位置会变）。\n"
-                "请新建一个空白工程再送入：`jybridge newproj`。"
+                "请新建一个空白工程再送入：`colorpass newproj`。"
                 % (proj.GetName(), cur_fps), info)
 
     try:

@@ -75,10 +75,10 @@ def _scan_open_draft(deadline=None, expected=None, target_bytes=None):
     前后各拍一次进程快照，是为了挡住「扫描期间用户切了草稿」：两次身份不一致
     就宁可返回 None，也不能把 A 工程的明文送进 B 工程的达芬奇时间线。
 
-    设 JYBRIDGE_NO_MEMSCAN=1 可以彻底关掉这条路（只用缓存与载入备份）。
+    设 COLORPASS_NO_MEMSCAN=1 可以彻底关掉这条路（只用缓存与载入备份）。
     给介意「读别人进程内存」的人一个开关，代价是从没读过的新草稿会读不到。
     """
-    if os.environ.get("JYBRIDGE_NO_MEMSCAN"):
+    if os.environ.get("COLORPASS_NO_MEMSCAN"):
         return None
     try:
         snap = probe.snapshot()

@@ -1,6 +1,6 @@
-"""缓存回收（jybridge/gc.py）的行为测试。
+"""缓存回收（colorpass/gc.py）的行为测试。
 
-全部在临时目录里跑，不碰真实的 %LOCALAPPDATA%\\JYBridge。
+全部在临时目录里跑，不碰真实的 %LOCALAPPDATA%\\ColorPass。
 覆盖四道闸：活动保护 / 孤儿 / 超期超量 / 总量兜底，以及 dry-run 与真删的区别。
 """
 import json
@@ -10,14 +10,14 @@ import time
 import unittest
 from pathlib import Path
 
-from jybridge import gc
+from colorpass import gc
 
 
 class GcBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.base = root / "JYBridge"
+        self.base = root / "ColorPass"
         self.base.mkdir()
         self.drafts = root / "drafts"
         self.drafts.mkdir()
@@ -187,15 +187,15 @@ class TestRun(GcBase):
         self.assertTrue((self.base / "luts" / "KEEP").is_dir())
 
     def test_logs_file_is_never_touched(self):
-        (self.base / "jybridge.log").write_text("log", encoding="utf-8")
+        (self.base / "colorpass.log").write_text("log", encoding="utf-8")
         gc.run(apply=True, base=self.base, draft_root=self.drafts)
-        self.assertTrue((self.base / "jybridge.log").exists())
+        self.assertTrue((self.base / "colorpass.log").exists())
 
 
 class TestScan(unittest.TestCase):
     def test_scan_reports_pools_and_protection(self):
         with tempfile.TemporaryDirectory() as t:
-            base = Path(t) / "JYBridge"
+            base = Path(t) / "ColorPass"
             (base / "luts" / "A").mkdir(parents=True)
             (base / "luts" / "A" / "f").write_bytes(b"x" * 100)
             (base / "current.json").write_text(json.dumps({"draft_id": "A"}),
@@ -215,12 +215,12 @@ class TestTidy(unittest.TestCase):
     """自动回收的触发点必须在命令行层。
 
     踩过的坑：一开始放在 `send.run` / `write.run` 末尾，结果跑一轮 unittest
-    就把真实的 %LOCALAPPDATA%\\JYBridge 删了 252 MB —— 测试只隔离了 run 目录，
+    就把真实的 %LOCALAPPDATA%\\ColorPass 删了 252 MB —— 测试只隔离了 run 目录，
     gc.auto() 用的仍是默认的真实缓存根。
     """
 
     def test_skips_failed_report(self):
-        from jybridge import cli, gc
+        from colorpass import cli, gc
         calls = []
         orig = gc.auto
         gc.auto = lambda *a, **kw: calls.append(1) or {"count": 0}
@@ -231,7 +231,7 @@ class TestTidy(unittest.TestCase):
         self.assertEqual(calls, [], "失败的报告不该触发回收")
 
     def test_attaches_summary_when_ok(self):
-        from jybridge import cli, gc
+        from colorpass import cli, gc
         orig = gc.auto
         gc.auto = lambda *a, **kw: {"count": 2, "freed_bytes": 4096,
                                     "before_bytes": 8192, "after_bytes": 4096}
@@ -242,7 +242,7 @@ class TestTidy(unittest.TestCase):
         self.assertEqual(rep["gc"], {"count": 2, "freed_bytes": 4096})
 
     def test_auto_failure_does_not_break_report(self):
-        from jybridge import cli, gc
+        from colorpass import cli, gc
         orig = gc.auto
 
         def boom(*a, **kw):

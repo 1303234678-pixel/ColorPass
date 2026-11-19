@@ -279,16 +279,16 @@ def scan_resolve():
     for i in range(1, (p.GetTimelineCount() or 0) + 1):
         tl = p.GetTimelineByIndex(i)
         names.append((tl.GetName() or "") if tl else "")
-    tag = paths.TIMELINE_TAG
+    own = [n for n in names if paths.is_own_timeline(n)]
     out.update({
         "project": p.GetName(),
         "timelines": names,
-        "own_timelines": [n for n in names if n.startswith(tag)],
-        "foreign_timelines": [n for n in names if not n.startswith(tag)],
-        # 可送入 = 工程里没有别人的时间线。自己上一轮建的 `JY · …` 不算阻塞：
+        "own_timelines": own,
+        "foreign_timelines": [n for n in names if not paths.is_own_timeline(n)],
+        # 可送入 = 工程里没有别人的时间线。自己上一轮建的 `CP · …` 不算阻塞：
         # send 建时间线时会自动换名（空名复用、有内容加序号），不会覆盖。
         # 判据要跟 preflight.daVinci 一致，别各写一套。
-        "blank": not [n for n in names if not n.startswith(tag)],
+        "blank": not [n for n in names if not paths.is_own_timeline(n)],
         "fps": p.GetSetting("timelineFrameRate"),
         "width": p.GetSetting("timelineResolutionWidth"),
         "height": p.GetSetting("timelineResolutionHeight"),
@@ -339,7 +339,7 @@ def run(deep=False, speed_mode="bake"):
             rep["blocking"].append({
                 "code": "project_manager",
                 "why": "达芬奇停在项目管理器，还没进入任何工程。送入前要打开一个"
-                       "空白工程（或运行 jybridge newproj 让工具自己建）。"})
+                       "空白工程（或运行 colorpass newproj 让工具自己建）。"})
         elif dv.get("blank") is False:
             rep["blocking"].append({
                 "code": "not_blank",

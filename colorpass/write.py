@@ -3,7 +3,7 @@
 本轮改的两件事
 --------------
 1. **cube 不再依赖临时目录**：LUT 复制进新草稿自己的
-   `<新草稿>/Resources/JYBridge/`，effect 的 path 指向这份副本。
+   `<新草稿>/Resources/ColorPass/`，effect 的 path 指向这份副本。
    草稿被复制/迁移/换机器，LUT 都跟着走。
 2. **转场与关键帧逐条核对**：写回前记录源草稿每段的转场/关键帧，
    写完后逐段比对。用户新加的转场、关键帧必须一字节不差。
@@ -327,7 +327,7 @@ def run(new_name=None, auto_pull=True):
     if ptr.get("_incomplete"):
         rep["error"] = ("最近一次「送入达芬奇」没有走完（%s 开始，时间线只摆了"
                         "一部分），写回会把残缺的剪辑带回去。请重新送入；"
-                        "要按上一次成功的版本写回，先执行 `jybridge reset`。"
+                        "要按上一次成功的版本写回，先执行 `colorpass reset`。"
                         % (ptr.get("pending_at") or "上一轮"))
         return rep
     did = ptr.get("draft_id")

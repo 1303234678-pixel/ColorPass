@@ -1,17 +1,17 @@
 """统一入口：一个命令做完「送入 / 取回 / 写回 / 锁」，并且先过使用前闸门。
 
-    python -m jybridge.cli gate               只做前置条件检查（不动任何东西）
-    python -m jybridge.cli status             秒级状态：剪映开没开、哪份草稿、上次送入
-    python -m jybridge.cli check              看当前草稿状态（要扫剪映内存，慢）
-    python -m jybridge.cli audit              全项体检：结构/素材/时长/风险
-    python -m jybridge.cli send [--speed=bake|slot|source]
-    python -m jybridge.cli pull
-    python -m jybridge.cli write [--name 新草稿名]
-    python -m jybridge.cli lock [on|off]
-    python -m jybridge.cli roundtrip [--speed=bake|slot|source]
-    python -m jybridge.cli reset              丢掉「没走完的那次送入」
-    python -m jybridge.cli clean [--draft-id] 清变速预渲染缓存
-    python -m jybridge.cli gc [--apply]       回收过期缓存（默认只报告，不动手）
+    python -m colorpass.cli gate               只做前置条件检查（不动任何东西）
+    python -m colorpass.cli status             秒级状态：剪映开没开、哪份草稿、上次送入
+    python -m colorpass.cli check              看当前草稿状态（要扫剪映内存，慢）
+    python -m colorpass.cli audit              全项体检：结构/素材/时长/风险
+    python -m colorpass.cli send [--speed=bake|slot|source]
+    python -m colorpass.cli pull
+    python -m colorpass.cli write [--name 新草稿名]
+    python -m colorpass.cli lock [on|off]
+    python -m colorpass.cli roundtrip [--speed=bake|slot|source]
+    python -m colorpass.cli reset              丢掉「没走完的那次送入」
+    python -m colorpass.cli clean [--draft-id] 清变速预渲染缓存
+    python -m colorpass.cli gc [--apply]       回收过期缓存（默认只报告，不动手）
 
 前置条件是硬的（用户要求，也是实测后果）：
   · **送入**要求剪映在跑且目标草稿确实打开（明文只在它内存里）、达芬奇在跑
@@ -21,7 +21,7 @@
 任一不满足就停，不写一个字。
 
 一次送入、之后随便改：送入那一刻的明文草稿整份存进
-%LOCALAPPDATA%\\JYBridge\\runs\\<草稿ID>\\snapshot\\，写回永远按这一版走。
+%LOCALAPPDATA%\\ColorPass\\runs\\<草稿ID>\\snapshot\\，写回永远按这一版走。
 
 面板调用的就是这些子命令，所以命令行与面板永远同一条链路。
 """
@@ -390,7 +390,7 @@ def _tidy(rep):
     """命令成功后顺手回收一次缓存，结果挂进报告。
 
     为什么放在命令行层、不放在 `send.run` / `write.run` 里：那两个是纯逻辑，
-    测试会直接调。库里调 gc.auto() 用的是默认的 %LOCALAPPDATA%\\JYBridge，
+    测试会直接调。库里调 gc.auto() 用的是默认的 %LOCALAPPDATA%\\ColorPass，
     测试只隔离了 run 目录，结果一轮 unittest 把真实缓存删了（实测踩过）。
     副作用只在「用户真的跑了一次命令」时发生，这才对。
     """
@@ -407,7 +407,7 @@ def _tidy(rep):
 
 
 def cmd_clean(a):
-    """清掉变速预渲染缓存（%LOCALAPPDATA%\\JYBridge\\retime）。
+    """清掉变速预渲染缓存（%LOCALAPPDATA%\\ColorPass\\retime）。
 
     `--draft-id` 只清那份草稿的缓存；不给就整目录清。
     """
@@ -529,7 +529,9 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
-    p = argparse.ArgumentParser(prog="jybridge")
+    # 改名前的缓存目录迁到新位置（只在新目录还不存在时搬一次）
+    paths.migrate_legacy_base()
+    p = argparse.ArgumentParser(prog="colorpass")
     p.add_argument("--allow-stale", action="store_true",
                    help="允许用内存旧快照（危险，仅排错用）")
     p.add_argument("--no-gate", action="store_true",
@@ -539,7 +541,7 @@ def main(argv=None):
     def _alias_flags(sp):
         """把两个全局开关也挂到子命令上。
 
-        这样 `jybridge send --no-gate` 与 `jybridge --no-gate send` 都能用。
+        这样 `colorpass send --no-gate` 与 `colorpass --no-gate send` 都能用。
         用 SUPPRESS 当默认值：子命令没写这个开关时不去覆盖母解析器已经置上的值，
         否则写在前面那个会被后面的默认 False 抹掉。
         """
@@ -556,7 +558,7 @@ def main(argv=None):
     sp.set_defaults(fn=cmd_plan)
     sp = sub.add_parser("newproj",
                         help="在达芬奇里新建一个空白工程并进入（送入前的准备）")
-    sp.add_argument("name", nargs="?", default="JY Bridge")
+    sp.add_argument("name", nargs="?", default="ColorPass")
     sp.set_defaults(fn=cmd_newproj)
     sp = sub.add_parser("audit")
     # 体检里「慢放段越界」算不算致命，取决于这次用什么落地模式：

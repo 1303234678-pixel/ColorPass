@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install ruff
-      - run: python -m ruff check jybridge tests --line-length 100
+      - run: python -m ruff check colorpass tests --line-length 100
 
   test:
     # 测试里会 import ctypes.wintypes 与 Windows 进程 API，只能在 Windows 上跑。

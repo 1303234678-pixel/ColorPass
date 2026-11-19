@@ -1,4 +1,4 @@
-"""JYBridge 离线单元测试 —— 不依赖达芬奇、不依赖剪映、不动任何真实草稿。
+"""ColorPass 离线单元测试 —— 不依赖达芬奇、不依赖剪映、不动任何真实草稿。
 
 覆盖：
     paths / draftio / snapshot / send.build_plan / audit.scan_draft
@@ -20,7 +20,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from jybridge import audit, draftio, paths, plain, pull, resolve, retime, send, snapshot, write  # noqa: E402
+from colorpass import audit, draftio, paths, plain, pull, resolve, retime, send, snapshot, write  # noqa: E402
 
 # ---------------------------------------------------------------- 夹具
 
@@ -745,7 +745,7 @@ class TestRetime(unittest.TestCase):
         """--draft-id .. 不能把缓存根（甚至 %LOCALAPPDATA%）删掉。
 
         clean 会对 paths.retime_dir(id) 做 rmtree，而 paths.ensure 会先
-        os.path.join + makedirs —— 传 .. 时目标就是 JYBridge 根，
+        os.path.join + makedirs —— 传 .. 时目标就是 ColorPass 根，
         current.json、全部 runs 快照、日志都在里面。
         """
         old = paths.RETIME_ROOT
@@ -815,7 +815,7 @@ class TestWriteHelpers(unittest.TestCase):
             mapping, copied = write.embed_cubes(new_draft, {"s1": good})
             dst = mapping["s1"]
             self.assertTrue(os.path.exists(dst))
-            self.assertIn("Resources/JYBridge", dst.replace("\\", "/"))
+            self.assertIn("Resources/ColorPass", dst.replace("\\", "/"))
             self.assertTrue(dst.endswith("s1.cube"))
             self.assertEqual(copied[0]["bytes"], os.path.getsize(dst))
         finally:
@@ -1030,7 +1030,7 @@ class TestStructureDiff(unittest.TestCase):
 # ---------------------------------------------------------------- 命名
 class TestSafeName(unittest.TestCase):
     def setUp(self):
-        from jybridge import workflow
+        from colorpass import workflow
         self.WF = workflow
 
     def test_illegal_chars(self):
@@ -1162,7 +1162,7 @@ class TestRegressions(unittest.TestCase):
             self.assertIsNone(retime._has_audio(sys.executable))
 
     def test_unique_name_appends_suffix(self):
-        from jybridge import workflow
+        from colorpass import workflow
         d = tempfile.mkdtemp()
         try:
             with mock.patch.object(workflow.JY, "draft_root",
@@ -1222,7 +1222,7 @@ class TestMaskAndCopies(unittest.TestCase):
 
     def _fake_scan(self, drafts, target):
         """把 extract_open_draft 的内部依赖全部打桩，只测「挑哪一份」。"""
-        from jybridge import memscan as MS
+        from colorpass import memscan as MS
         blob = b'{"id":"UUID-1","version":1,' + b" " * 400
 
         def fake_regions(h):
@@ -1327,7 +1327,7 @@ class TestMaskAndCopies(unittest.TestCase):
 
     def test_structure_sig_ignores_decorations(self):
         """结构指纹只比段结构：加蒙版/关键帧不该改变它，剪掉一段必须改变。"""
-        from jybridge import memscan as MS
+        from colorpass import memscan as MS
         a = mini_draft(2)
         b = self.with_masks(mini_draft(2), 0, keyframed=True)
         self.assertEqual(MS._structure(a), MS._structure(b))
@@ -1337,7 +1337,7 @@ class TestMaskAndCopies(unittest.TestCase):
 
     def test_compact_size_counts_bytes_not_chars(self):
         """中文名一段就差几百字节，必须按 UTF-8 字节跟磁盘载荷对账。"""
-        from jybridge import memscan as MS
+        from colorpass import memscan as MS
         d = mini_draft(1)
         d["materials"]["videos"][0]["name"] = "中文名字"
         chars = len(json.dumps(d, ensure_ascii=False, separators=(",", ":")))
@@ -1672,16 +1672,16 @@ class TestReadFallsBack(unittest.TestCase):
 # ---------------------------------------------------------------- 达芬奇 API 延迟加载
 #
 # 2026-11-20 的 CI 教训：顶层 `import DaVinciResolveScript` 会让「没装达芬奇」的机器
-# 连 `import jybridge.send` 都失败。这三条钉住「不用 API 的功能必须在裸机上可用」。
+# 连 `import colorpass.send` 都失败。这三条钉住「不用 API 的功能必须在裸机上可用」。
 
 class TestResolveLazy(unittest.TestCase):
     def test_all_modules_import_without_resolve(self):
         """子进程里把搜索路径清空，模拟没装达芬奇的机器。"""
         import subprocess
         code = (
-            "import jybridge.resolve as r; r.MOD_DIRS = () ;"
-            "import jybridge.send, jybridge.pull, jybridge.preflight, jybridge.lock,"
-            " jybridge.audit, jybridge.workflow, jybridge.draftbuild;"
+            "import colorpass.resolve as r; r.MOD_DIRS = () ;"
+            "import colorpass.send, colorpass.pull, colorpass.preflight, colorpass.lock,"
+            " colorpass.audit, colorpass.workflow, colorpass.draftbuild;"
             "assert r.available() is False;"
             "print('ok')"
         )

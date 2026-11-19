@@ -30,10 +30,10 @@
 但 current() 会优先看到 pending.json 并标 `_incomplete`，写回直接拒绝 ——
 既不拿旧版本冒充新送入，也不会因为一次失败把上一版的好数据删掉。
 
-%LOCALAPPDATA%/JYBridge/current.json
+%LOCALAPPDATA%/ColorPass/current.json
     最近一次「完整走完」的送入：哪个草稿、哪条达芬奇时间线、快照在哪。
     取回与写回都从这里找上下文，不再去读剪映的内存。
-%LOCALAPPDATA%/JYBridge/pending.json
+%LOCALAPPDATA%/ColorPass/pending.json
     正在进行的送入。存在即表示「上一次没走完」。
 """
 import hashlib

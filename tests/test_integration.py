@@ -1,4 +1,4 @@
-"""JYBridge 集成测试 —— 走真代码路径，只把两个宿主换成假的。
+"""ColorPass 集成测试 —— 走真代码路径，只把两个宿主换成假的。
 
 为什么要有这一层
 ----------------
@@ -30,7 +30,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from jybridge import cli, draftio, paths, preflight, pull, snapshot, write  # noqa: E402
+from colorpass import cli, draftio, paths, preflight, pull, snapshot, write  # noqa: E402
 
 # ================================================================ 夹具
 
@@ -63,14 +63,14 @@ class FakeItem(object):
         return self._name
 
     def GetMarkers(self):
-        return {0: {"name": "JY", "customData": self._sid}} if self._sid else {}
+        return {0: {"name": "CP", "customData": self._sid}} if self._sid else {}
 
     def GetMediaPoolItem(self):
         return None
 
 
 class FakeTimeline(object):
-    def __init__(self, name="JY · 草稿", tracks=None):
+    def __init__(self, name="CP · 草稿", tracks=None):
         self._name = name
         self.tracks = tracks or {}
 
@@ -165,7 +165,7 @@ class FakeResolve(object):
         return _PM()
 
 
-def plan_for(specs, timeline="JY · 草稿", start_frame=0, draft_id="D1"):
+def plan_for(specs, timeline="CP · 草稿", start_frame=0, draft_id="D1"):
     """按 [(segment_id, lane, rec, dur)] 造 plan.json 的结构。"""
     return {
         "timeline": timeline, "fps": 30, "start_frame": start_frame,
@@ -365,7 +365,7 @@ class TestWriteChain(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # ---- 造一次「送入」 ----
-    def seed(self, draft=None, committed=True, timeline="JY · 草稿", segments=None):
+    def seed(self, draft=None, committed=True, timeline="CP · 草稿", segments=None):
         draft = draft or draft_with_effects(3)
         meta = snapshot.save(draft, {"name": "草稿A", "folder": self.src},
                              self.run_dir)
@@ -394,7 +394,7 @@ class TestWriteChain(unittest.TestCase):
         return {"ok": True, "count": len(luts), "segment_luts": luts,
                 "alignment_ok": alignment, "identity_dev_max": 0.0,
                 "identity_ok": True, "identity_graded": 0, "issues": [],
-                "timeline": "JY · 草稿"}
+                "timeline": "CP · 草稿"}
 
     def _fake_write_back(self, clips, luts, draft=None, segment_luts=None,
                          project=None, name=None, **kw):
@@ -687,20 +687,27 @@ class TestPreflightGate(unittest.TestCase):
         self.assertEqual(cm.exception.code, "not_blank")
         self.assertIn("我的片子", cm.exception.msg)
 
-    def test_previous_jy_timeline_allowed_now(self):
-        """上一轮自己建的 `JY · …` 不再拦：send 会换名，不会覆盖旧成果。
+    def test_own_timeline_allowed_now(self):
+        """上一轮自己建的 `CP · …` 不再拦：send 会换名，不会覆盖旧成果。
 
         原来一刀切要求工程全空，导致第二轮送入必然失败 —— 用户每次都得
         手动新建工程，这就是「送入不顺」的主因。
         """
-        proj = FakeProject(timelines=["JY · 草稿A"], pool=FakePool())
+        proj = FakeProject(timelines=["CP · 草稿A"], pool=FakePool())
         r, p, info = self.gate(proj)
-        self.assertEqual(info["own_timelines"], ["JY · 草稿A"])
+        self.assertEqual(info["own_timelines"], ["CP · 草稿A"])
+        self.assertEqual(info["foreign_timelines"], [])
+
+    def test_legacy_jy_timeline_still_owned(self):
+        """改名前建的 `JY · …` 也算自己的，升级后老工程不该被闸门拦下。"""
+        proj = FakeProject(timelines=["JY · 草稿A", "CP · 草稿B"], pool=FakePool())
+        r, p, info = self.gate(proj)
+        self.assertEqual(info["own_timelines"], ["JY · 草稿A", "CP · 草稿B"])
         self.assertEqual(info["foreign_timelines"], [])
 
     def test_fps_mismatch_refused_when_own_timeline_exists(self):
         """工程里有自己的时间线、帧率却被人改成 24：不许改回去。"""
-        proj = FakeProject(timelines=["JY · 草稿A"], pool=FakePool(),
+        proj = FakeProject(timelines=["CP · 草稿A"], pool=FakePool(),
                            settings={"timelineFrameRate": "24",
                                      "timelineResolutionWidth": "1920",
                                      "timelineResolutionHeight": "1080"})
@@ -715,7 +722,7 @@ class TestPreflightGate(unittest.TestCase):
                 mock.patch.object(preflight.time, "sleep", return_value=None):
             _, proj, info = preflight.daVinci(require_blank=True)
         self.assertEqual(info["page"], "color")
-        self.assertEqual(info["project"], "JY Bridge")
+        self.assertEqual(info["project"], "ColorPass")
         self.assertTrue(r.created)
 
     def test_project_manager_without_auto_is_a_gate(self):
@@ -769,7 +776,7 @@ class TestPreflightGate(unittest.TestCase):
     def test_gate_blocks_edited_since_open(self):
         d = self._jy_folder(edit_offset=+60)
         cur = {"name": "测试草稿", "timeline_id": "T1", "folder": d}
-        with mock.patch("jybridge.draftio.identify", return_value=cur):
+        with mock.patch("colorpass.draftio.identify", return_value=cur):
             with self.assertRaises(preflight.Gate) as cm:
                 preflight.jianying(require_fresh=True)
         self.assertEqual(cm.exception.code, "stale_draft")
@@ -779,7 +786,7 @@ class TestPreflightGate(unittest.TestCase):
     def test_gate_allows_clean_draft(self):
         d = self._jy_folder(edit_offset=-60)     # 编辑在打开之前
         cur = {"name": "测试草稿", "timeline_id": "T1", "folder": d}
-        with mock.patch("jybridge.draftio.identify", return_value=cur):
+        with mock.patch("colorpass.draftio.identify", return_value=cur):
             info = preflight.jianying(require_fresh=True)
         self.assertEqual(info["draft"], "测试草稿")
 
@@ -787,7 +794,7 @@ class TestPreflightGate(unittest.TestCase):
         """写回按快照重建，不受「打开后改过」影响，默认不该被拦。"""
         d = self._jy_folder(edit_offset=+60)
         cur = {"name": "测试草稿", "timeline_id": "T1", "folder": d}
-        with mock.patch("jybridge.draftio.identify", return_value=cur):
+        with mock.patch("colorpass.draftio.identify", return_value=cur):
             info = preflight.jianying()          # require_fresh 默认 False
         self.assertTrue(info["locked"])
 
@@ -825,7 +832,7 @@ class TestCli(unittest.TestCase):
 
     def test_clean_scope_default_all(self):
         seen = {}
-        with mock.patch("jybridge.retime.clean",
+        with mock.patch("colorpass.retime.clean",
                         side_effect=lambda d=None: seen.update(d=d) or {"ok": True}):
             self.run_cli(["clean"])
         self.assertIsNone(seen["d"])
@@ -836,7 +843,7 @@ class TestCli(unittest.TestCase):
         开源后它是「没装达芬奇也能验证」的那一屏，所以必须真能跑。
         """
         d = draft_with_effects(2)
-        with mock.patch("jybridge.draftio.read",
+        with mock.patch("colorpass.draftio.read",
                         return_value=(d, {"name": "草稿A"}, {"stale": False})):
             code, out = self.run_cli(["plan"])
         self.assertEqual(code, 0)
@@ -847,9 +854,9 @@ class TestCli(unittest.TestCase):
         self.assertIn("video", rep["kinds"])
 
     def test_no_memscan_env_short_circuits_scan(self):
-        """JYBRIDGE_NO_MEMSCAN=1 时连进程快照都不该拍。"""
-        with mock.patch.dict(os.environ, {"JYBRIDGE_NO_MEMSCAN": "1"}), \
-                mock.patch("jybridge.draftio.probe.snapshot",
+        """COLORPASS_NO_MEMSCAN=1 时连进程快照都不该拍。"""
+        with mock.patch.dict(os.environ, {"COLORPASS_NO_MEMSCAN": "1"}), \
+                mock.patch("colorpass.draftio.probe.snapshot",
                            side_effect=AssertionError("不该碰剪映进程")):
             self.assertIsNone(draftio._scan_open_draft(deadline=1))
 
@@ -884,7 +891,7 @@ class TestCli(unittest.TestCase):
 
     def test_clean_scope_draft_id(self):
         seen = {}
-        with mock.patch("jybridge.retime.clean",
+        with mock.patch("colorpass.retime.clean",
                         side_effect=lambda d=None: seen.update(d=d) or {"ok": True}):
             self.run_cli(["clean", "--draft-id", "D9"])
         self.assertEqual(seen["d"], "D9")
@@ -896,7 +903,7 @@ class TestCli(unittest.TestCase):
         那份，下次送入还得全部重编。
         """
         seen = {}
-        with mock.patch("jybridge.retime.clean",
+        with mock.patch("colorpass.retime.clean",
                         side_effect=lambda d=None: seen.update(d=d) or {"ok": True}):
             code, out = self.run_cli(["clean", "--all", "--draft-id", "D9"])
         self.assertNotIn("d", seen, "冲突时不该真的去删")
@@ -911,7 +918,7 @@ class TestCli(unittest.TestCase):
             return {"ok": True, "action": "audit", "blocking": [],
                     "warnings": [], "facts": {}}
 
-        with mock.patch("jybridge.audit.run", side_effect=fake_audit):
+        with mock.patch("colorpass.audit.run", side_effect=fake_audit):
             self.run_cli(["audit", "--speed", "slot"])
         self.assertEqual(got["m"], "slot")
 
@@ -922,7 +929,7 @@ class TestCli(unittest.TestCase):
             got.append(kw.get("speed_mode"))
             return {"ok": True, "action": "send"}
 
-        with mock.patch("jybridge.send.run", side_effect=fake_send):
+        with mock.patch("colorpass.send.run", side_effect=fake_send):
             self.run_cli(["--no-gate", "send"])
             self.run_cli(["send", "--no-gate"])
         self.assertEqual(len(got), 2, "两个位置都该被认成 --no-gate")

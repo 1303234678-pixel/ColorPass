@@ -3,13 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "jybridge"
+name = "colorpass"
 dynamic = ["version"]
 description = "剪映 ⇄ 达芬奇：读加密草稿、按绝对帧落轨、把调色以 33³ LUT 回传并写回可继续编辑的草稿"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
-authors = [{ name = "JYBridge contributors" }]
+authors = [{ name = "ColorPass contributors" }]
 keywords = ["jianying", "capcut", "davinci-resolve", "draft", "lut", "roundtrip"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -31,27 +31,27 @@ ffmpeg = ["imageio-ffmpeg>=0.4"]
 dev = ["ruff>=0.5", "vulture>=2.11", "imageio-ffmpeg>=0.4"]
 
 [project.scripts]
-jybridge = "jybridge.cli:main"
+colorpass = "colorpass.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/1303234678-pixel/JYBridge"
-Issues = "https://github.com/1303234678-pixel/JYBridge/issues"
+Homepage = "https://github.com/1303234678-pixel/ColorPass"
+Issues = "https://github.com/1303234678-pixel/ColorPass/issues"
 
 [tool.setuptools.packages.find]
-include = ["jybridge*"]
+include = ["colorpass*"]
 
-# 版本号只有一处：jybridge/__init__.py。发布时改那里，别再两处对不上。
+# 版本号只有一处：colorpass/__init__.py。发布时改那里，别再两处对不上。
 [tool.setuptools.dynamic]
-version = { attr = "jybridge.__version__" }
+version = { attr = "colorpass.__version__" }
 
 [tool.setuptools.package-data]
-jybridge = ["templates/*.json"]
+colorpass = ["templates/*.json"]
 
 # ---------------------------------------------------------------- 代码检查
 #
 # 日常：
-#     python -m ruff check jybridge tests     # 未使用导入/变量、未定义名、导入顺序
-#     python -m vulture jybridge --min-confidence 80
+#     python -m ruff check colorpass tests     # 未使用导入/变量、未定义名、导入顺序
+#     python -m vulture colorpass --min-confidence 80
 #
 # 为什么要这几个规则（都是实际踩过的）：
 #   F401  未使用的导入 —— 删除功能后最容易留下的东西
@@ -78,8 +78,8 @@ ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 # 面板只在达芬奇里跑，fusion / bmd 由宿主注入。
-"jybridge/panel/JYBridge.py" = ["F821"]
+"colorpass/panel/ColorPass.py" = ["F821"]
 
 [tool.vulture]
 min_confidence = 80
-paths = ["jybridge"]
+paths = ["colorpass"]

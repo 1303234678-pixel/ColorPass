@@ -281,7 +281,7 @@ def purge_old(proj, mp, tag):
 
     闸门现在要求工程必须是空白（一条时间线都没有），所以正常情况下没有
     「旧时间线」可删。而一旦用户绕过闸门（--no-gate）或工程里有上一轮
-    调好色的 `JY · …`，自动删就等于删掉他的工作。同名冲突交给
+    调好色的 `CP · …`，自动删就等于删掉他的工作。同名冲突交给
     CreateEmptyTimeline 报错，让人自己决定。
     """
     return []
@@ -314,7 +314,7 @@ def create_timeline(mp, proj, base_name, max_try=6):
     还是达芬奇根本没进工程。现在把每一步都记进 notes。
 
     有内容的同名时间线**绝不复用、绝不覆盖**：那可能是上一轮已经调过色的
-    成果，宁可换个名字（`JY · 草稿 (2)`）。
+    成果，宁可换个名字（`CP · 草稿 (2)`）。
     返回 (tl, used_name, tried, notes)。
     """
     tried, notes = [], []
@@ -346,9 +346,9 @@ def create_timeline(mp, proj, base_name, max_try=6):
 
 def mark_item(it, sid):
     try:
-        return bool(it.AddMarker(0, "Blue", "JY", "", 1, sid))
+        return bool(it.AddMarker(0, "Blue", paths.MARKER_NAME, "", 1, sid))
     except TypeError:
-        return bool(it.AddMarker(0, "Blue", "JY", sid))
+        return bool(it.AddMarker(0, "Blue", paths.MARKER_NAME, sid))
 
 
 def mark_disabled(placed):

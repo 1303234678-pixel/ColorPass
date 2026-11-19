@@ -35,7 +35,7 @@ body:
   - type: textarea
     id: check
     attributes:
-      label: jybridge check 输出
+      label: colorpass check 输出
       render: json
     validations:
       required: false

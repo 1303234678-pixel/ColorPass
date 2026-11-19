@@ -409,7 +409,7 @@ def scan_one(pid, needles, dump_dir):
 def main():
     """开发用：把命中片段 dump 到磁盘，人工翻看。
 
-    这不是给用户跑的入口，产物只在 %LOCALAPPDATA%\\JYBridge\\_mem 下，
+    这不是给用户跑的入口，产物只在 %LOCALAPPDATA%\\ColorPass\\_mem 下，
     不会写进仓库。needles 也保持通用 —— 别把个人目录名写进这里。
     """
     import time

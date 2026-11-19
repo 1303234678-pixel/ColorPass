@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from jybridge import paths, pull, snapshot, write  # noqa: E402
+from colorpass import paths, pull, snapshot, write  # noqa: E402
 
 
 def _load():
@@ -55,7 +55,7 @@ class _It(object):
         return self.sid[:8]
 
     def GetMarkers(self):
-        return {0: {"name": "JY", "customData": self.sid}}
+        return {0: {"name": "CP", "customData": self.sid}}
 
 
 class _Tl(object):

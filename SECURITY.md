@@ -4,9 +4,9 @@
 
 | 动作 | 范围 | 开关 |
 |---|---|---|
-| 读剪映进程内存 | 只读 `JianyingPro.exe`，只为拿当前打开草稿的明文 JSON | `JYBRIDGE_NO_MEMSCAN=1` 完全关闭 |
+| 读剪映进程内存 | 只读 `JianyingPro.exe`，只为拿当前打开草稿的明文 JSON | `COLORPASS_NO_MEMSCAN=1` 完全关闭 |
 | 读草稿目录 | 只读当前打开的工程目录及其 `.backup/` | — |
-| 写磁盘 | 只在 `%LOCALAPPDATA%\JYBridge\` 与写回时新建的草稿目录 | — |
+| 写磁盘 | 只在 `%LOCALAPPDATA%\ColorPass\` 与写回时新建的草稿目录 | — |
 | 网络 | **不联网**。没有任何上传、遥测、自动更新 | — |
 | 达芬奇 | 只通过官方脚本 API（`AppendToTimeline` / `ExportLUT` / marker） | — |
 
@@ -15,9 +15,9 @@
 1. `luts\<草稿ID>\` — 取回调色的工作副本
 2. `runs\<草稿ID>\` — 每次动作的报告与底稿快照（写回要用）
 3. `plain\<草稿ID>.json` — 明文缓存，滚动保留最近 12 份
-4. `panel\` 与 `jybridge.log` — 日志
+4. `panel\` 与 `colorpass.log` — 日志
 
-`jybridge gc --apply` 只删前三类里可再生的部分；`runs` 里的底稿快照永不自动回收
+`colorpass gc --apply` 只删前三类里可再生的部分；`runs` 里的底稿快照永不自动回收
 （它是写回的唯一依据）。
 
 ## 不做什么
@@ -31,7 +31,7 @@
 
 剪映没有公开的草稿读写接口，本工具依赖两条**未公开但也不涉及授权绕过**的行为：
 读进程内存里的明文、写明文草稿让剪映自己重新加密。这两条都在本机、只针对用户
-自己的文件。如果你所在的组织不允许读进程内存，用 `JYBRIDGE_NO_MEMSCAN=1`，
+自己的文件。如果你所在的组织不允许读进程内存，用 `COLORPASS_NO_MEMSCAN=1`，
 只靠缓存与载入备份工作（代价：从没读过的新草稿需要先成功读一次）。
 
 ## 报告安全问题

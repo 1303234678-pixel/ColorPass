@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        请先跑一次 `jybridge check`，把输出贴上来 —— 它包含判断问题所需的大部分信息
+        请先跑一次 `colorpass check`，把输出贴上来 —— 它包含判断问题所需的大部分信息
         （草稿结构、明文来源、新鲜度）。**不要上传真实草稿或素材**，贴 JSON 就够了。
 
   - type: textarea
@@ -21,8 +21,8 @@ body:
   - type: textarea
     id: check
     attributes:
-      label: jybridge check 输出
-      description: 终端运行 `jybridge check`，把整段 JSON 贴进来。
+      label: colorpass check 输出
+      description: 终端运行 `colorpass check`，把整段 JSON 贴进来。
       render: json
     validations:
       required: true
@@ -62,8 +62,8 @@ body:
     attributes:
       label: 日志
       description: |
-        `%LOCALAPPDATA%\JYBridge\jybridge.log` 与 `panel\jybridge_panel.log` 的最后 50 行。
-        报告文件在 `%LOCALAPPDATA%\JYBridge\runs\<草稿ID>\`（send.json / plan.json 等）。
+        `%LOCALAPPDATA%\ColorPass\colorpass.log` 与 `panel\colorpass_panel.log` 的最后 50 行。
+        报告文件在 `%LOCALAPPDATA%\ColorPass\runs\<草稿ID>\`（send.json / plan.json 等）。
       render: text
     validations:
       required: false
@@ -73,7 +73,7 @@ body:
     attributes:
       label: 确认
       options:
-        - label: 已确认草稿是打开的，且 `jybridge check` 能读到（不是 no_plaintext）
+        - label: 已确认草稿是打开的，且 `colorpass check` 能读到（不是 no_plaintext）
           required: true
         - label: 已尝试「关掉草稿再重新打开」一次
           required: false

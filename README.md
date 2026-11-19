@@ -1,12 +1,12 @@
-# JYBridge
+# ColorPass
 
-[![CI](https://github.com/1303234678-pixel/JYBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/1303234678-pixel/JYBridge/actions/workflows/ci.yml)
+[![CI](https://github.com/1303234678-pixel/ColorPass/actions/workflows/ci.yml/badge.svg)](https://github.com/1303234678-pixel/ColorPass/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab.svg)](pyproject.toml)
 
 剪映剪辑 · 达芬奇调色 · 回剪映继续剪
 
-JYBridge 是达芬奇的 Workflow Integration 插件，用于在剪映专业版与达芬奇之间做**调色往返**：
+ColorPass 是达芬奇的 Workflow Integration 插件，用于在剪映专业版与达芬奇之间做**调色往返**：
 读取当前打开的剪映草稿，按原语义重建到达芬奇时间线；逐段导出 LUT；再把调色写回一份
 **仍可继续编辑**的剪映草稿。全过程不生成中间工程文件，不渲染成片。
 
@@ -38,12 +38,12 @@ JYBridge 是达芬奇的 Workflow Integration 插件，用于在剪映专业版�
 
 ### 1. 草稿正文：三级来源
 
-剪映 11.7 起 `draft_content.json` 为密文，密钥在进程启动时注入、不落盘。JYBridge 按可信度
+剪映 11.7 起 `draft_content.json` 为密文，密钥在进程启动时注入、不落盘。ColorPass 按可信度
 依次尝试三条来源，前两条是秒级文件操作：
 
 | 顺序 | 来源 | 成立条件 | 校验 |
 |---|---|---|---|
-| 1 | `%LOCALAPPDATA%\JYBridge\plain\<id>.json` | 以前成功读过这份草稿 | 磁盘指纹（密文载荷字节数 + 最后编辑时间）完全一致 |
+| 1 | `%LOCALAPPDATA%\ColorPass\plain\<id>.json` | 以前成功读过这份草稿 | 磁盘指纹（密文载荷字节数 + 最后编辑时间）完全一致 |
 | 2 | `<草稿>/.backup/*.load.bak` | 本工具写回过的草稿（明文写入，备份亦为明文） | id 匹配，且编辑时间不晚于备份 |
 | 3 | 进程内存扫描 | 明文尚未被剪映回收 | 体积对账，容差 320 B + 0.5% |
 
@@ -54,7 +54,7 @@ JYBridge 是达芬奇的 Workflow Integration 插件，用于在剪映专业版�
 ### 2. 放置：草稿语义 → 时间线
 
 XML / AAF 无法表达「2 倍速」「该段已停用」这类属性，按原速摆放会让后续每一段累积错位。
-JYBridge 在草稿语义层消化这些属性，再用绝对帧号落轨：
+ColorPass 在草稿语义层消化这些属性，再用绝对帧号落轨：
 
 | 草稿语义 | 处理方式 |
 |---|---|
@@ -90,13 +90,13 @@ JYBridge 在草稿语义层消化这些属性，再用绝对帧号落轨：
 ## 安装
 
 ```bash
-git clone https://github.com/1303234678-pixel/JYBridge.git
-cd JYBridge
+git clone https://github.com/1303234678-pixel/ColorPass.git
+cd ColorPass
 python -m pip install -e .
-python -m jybridge.install      # 安装面板，并记录源码目录与解释器路径
+python -m colorpass.install      # 安装面板，并记录源码目录与解释器路径
 ```
 
-重启达芬奇，菜单 `工作区 → Workflow Integrations → JYBridge`。
+重启达芬奇，菜单 `工作区 → Workflow Integrations → ColorPass`。
 
 可选依赖：
 
@@ -110,14 +110,14 @@ python -m pip install -e ".[ffmpeg]"    # 变速预渲染（缺省时退回近�
 面板是薄壳，全部能力均可单独调用：
 
 ```bash
-jybridge check                      # 读取当前打开的草稿，输出结构报告（JSON）
-jybridge plan                       # 只计算落轨计划（dry-run，不需要达芬奇）
-jybridge status                     # 面板使用的状态汇总
-jybridge send                       # 草稿 → 达芬奇时间线
-jybridge pull                       # 达芬奇调色 → 逐段 33³ LUT
-jybridge write                      # LUT → 写回新草稿
-jybridge roundtrip                  # send + pull + write
-jybridge gc --apply                 # 回收可再生缓存（默认只报告）
+colorpass check                      # 读取当前打开的草稿，输出结构报告（JSON）
+colorpass plan                       # 只计算落轨计划（dry-run，不需要达芬奇）
+colorpass status                     # 面板使用的状态汇总
+colorpass send                       # 草稿 → 达芬奇时间线
+colorpass pull                       # 达芬奇调色 → 逐段 33³ LUT
+colorpass write                      # LUT → 写回新草稿
+colorpass roundtrip                  # send + pull + write
+colorpass gc --apply                 # 回收可再生缓存（默认只报告）
 ```
 
 `plan` 输出的就是 `send` 内部实际使用的计划，包含重叠消解、预渲染标记与跳过原因，
@@ -126,7 +126,7 @@ jybridge gc --apply                 # 回收可再生缓存（默认只报告）
 ## 模块地图
 
 ```
-jybridge/
+colorpass/
 ├── probe.py       剪映工程识别（进程、窗口、草稿目录、锁状态）
 ├── memscan.py     进程内存扫描（Windows ReadProcessMemory）
 ├── plain.py       明文三级来源仲裁
@@ -164,23 +164,23 @@ jybridge/
 
 ## 数据与产物
 
-`%LOCALAPPDATA%\JYBridge\` 下只有可再生数据：
+`%LOCALAPPDATA%\ColorPass\` 下只有可再生数据：
 
 - `plain\` —— 明文缓存（滚动保留 12 份，按磁盘指纹失效）
 - `luts\` —— LUT 工作副本
 - `retime\` —— 变速预渲染的中间素材
 - `runs\` —— 每次动作的报告 JSON
 
-另有一类跟随草稿：写回时把 cube 复制进新草稿目录的 `Resources/JYBridge/`，
+另有一类跟随草稿：写回时把 cube 复制进新草稿目录的 `Resources/ColorPass/`，
 草稿被复制或迁移到其他机器，LUT 依然有效。
 
-`jybridge gc` 只统计可回收量，加 `--apply` 才实际删除。
+`colorpass gc` 只统计可回收量，加 `--apply` 才实际删除。
 
 ## 隐私与边界
 
 - 只读本机、当前用户、当前打开的剪映草稿；不联网、不上传。
 - 不绕过剪映授权限制，不解析他人文件，不修改剪映安装目录。
-- 设置 `JYBRIDGE_NO_MEMSCAN=1` 可完全关闭内存扫描，仅用缓存与载入备份
+- 设置 `COLORPASS_NO_MEMSCAN=1` 可完全关闭内存扫描，仅用缓存与载入备份
   （代价：从未读取过的新草稿需先执行一次送入并保持剪映打开）。
 - 本项目与字节跳动、Blackmagic Design 均无关联。
 
@@ -189,7 +189,7 @@ jybridge/
 ```bash
 python -m pip install -e ".[dev]"
 python -m unittest discover -s tests -p "test_*.py"
-python -m ruff check jybridge tests --line-length 100
+python -m ruff check colorpass tests --line-length 100
 ```
 
 311 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖

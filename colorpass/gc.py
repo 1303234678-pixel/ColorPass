@@ -1,8 +1,8 @@
-"""JYBridge · 缓存回收
+"""ColorPass · 缓存回收
 
 为什么会越用越大
 ----------------
-每送一次草稿都会在 `%LOCALAPPDATA%\\JYBridge\\` 下留一份痕迹，而且**按草稿 ID
+每送一次草稿都会在 `%LOCALAPPDATA%\\ColorPass\\` 下留一份痕迹，而且**按草稿 ID
 分目录**，剪映里删掉旧草稿也不会有人来收：
 
   luts/<草稿ID>/     取回时导出的 cube 工作副本，一份草稿约 12 MB
@@ -10,7 +10,7 @@
   runs/<草稿ID>/     报告 + 写回用的底稿快照 —— **不参与回收**，见 POOLS
 
 一条片子来回三四版，几百 MB 是很正常的事。luts 与 retime 都是**可再生的
-中间产物**：cube 在写回时已经复制进新草稿的 `Resources/JYBridge/`，retime
+中间产物**：cube 在写回时已经复制进新草稿的 `Resources/ColorPass/`，retime
 素材随时能重编。runs 里的快照删了就真的没了（写回只认它），所以单独排除。
 
 回收策略（四道闸，从硬到软）

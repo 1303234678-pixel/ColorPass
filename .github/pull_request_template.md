@@ -15,7 +15,7 @@
 <!-- 有真实草稿实测就写实测结论（时长、段数、断言项）；没有就说明为什么只能在单测里覆盖 -->
 
 - [ ] `python -m unittest discover -s tests -p "test_*.py"` 全绿
-- [ ] `python -m ruff check jybridge tests --line-length 100` 无告警
+- [ ] `python -m ruff check colorpass tests --line-length 100` 无告警
 - [ ] 新增/修改的用例在修复前会失败
 
 ## 影响面
