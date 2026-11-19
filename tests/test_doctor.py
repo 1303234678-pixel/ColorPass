@@ -135,8 +135,12 @@ class TestPlatformGuards(unittest.TestCase):
             self.assertEqual(paths.data_root(), os.path.abspath("/tmp/colorpass-test"))
 
     def test_panel_targets_exist_for_this_platform(self):
+        """Windows / macOS 有面板目录，其它平台明确为空（面板只在达芬奇桌面版用）。"""
         targets = install._targets()
-        self.assertTrue(targets, "当前平台应至少有一个面板安装位置")
+        if paths.WINDOWS or paths.MACOS:
+            self.assertTrue(targets, "当前平台应至少有一个面板安装位置")
+        else:
+            self.assertEqual(targets, [])
         for d in targets:
             self.assertTrue(os.path.isabs(d), d)
 
