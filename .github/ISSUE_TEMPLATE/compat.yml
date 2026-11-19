@@ -1,0 +1,41 @@
+name: 版本不兼容
+description: 剪映或达芬奇升级后失效
+title: "[compat] "
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        剪映的明文路线依赖它内部行为，升级后失效是可预期的。请提供版本号与失败现象，
+        维护者会更新 [版本矩阵](../blob/main/docs/剪映草稿字段.md)。
+
+  - type: input
+    id: jianying
+    attributes:
+      label: 剪映版本（升级前 → 升级后）
+      placeholder: 11.7.0 → 12.0.1
+    validations:
+      required: true
+
+  - type: input
+    id: resolve
+    attributes:
+      label: 达芬奇版本
+    validations:
+      required: true
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 现象
+      description: 例如「check 报 no_plaintext」「送入后段数不对」「写回后剪映打不开」
+    validations:
+      required: true
+
+  - type: textarea
+    id: check
+    attributes:
+      label: jybridge check 输出
+      render: json
+    validations:
+      required: false
