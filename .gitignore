@@ -26,6 +26,9 @@ htmlcov/
 Thumbs.db
 desktop.ini
 
+# 内部资料（不随仓库发布）
+docs/_internal/
+
 # 本地产物（不要提交真实草稿、快照或导出的 LUT）
 out/
 runs/
