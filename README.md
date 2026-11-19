@@ -1,5 +1,8 @@
 # JYBridge
 
+[![CI](https://github.com/1303234678-pixel/JYBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/1303234678-pixel/JYBridge/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **剪映剪辑，达芬奇调色，然后回剪映继续剪。**
 
 绝大多数「剪映 ⇄ 达芬奇」工具在搬工程：导出 XML、渲染成片、重建草稿。
