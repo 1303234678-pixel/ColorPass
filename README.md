@@ -192,7 +192,7 @@ python -m unittest discover -s tests -p "test_*.py"
 python -m ruff check colorpass tests --line-length 100
 ```
 
-311 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
+312 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
 Ubuntu 静态检查与 Windows 3.9 / 3.12 全量测试。
 
 ## 许可证
