@@ -9,6 +9,8 @@
     python -m colorpass.cli write [--name 新草稿名]
     python -m colorpass.cli lock [on|off]
     python -m colorpass.cli roundtrip [--speed=bake|slot|source]
+    python -m colorpass.cli ingest [--name 新草稿名] [--dry-run] [--xml 路径]
+                                               达芬奇当前时间线 → 剪映草稿（反方向）
     python -m colorpass.cli reset              丢掉「没走完的那次送入」
     python -m colorpass.cli clean [--draft-id] 清变速预渲染缓存
     python -m colorpass.cli gc [--apply]       回收过期缓存（默认只报告，不动手）
@@ -494,6 +496,16 @@ def cmd_roundtrip(a):
     return 0 if out["write"].get("ok") else 1
 
 
+def cmd_ingest(a):
+    """达芬奇当前时间线 → 剪映草稿（与 send 相反的方向）。"""
+    from . import ingest
+    rep = ingest.run(name=getattr(a, "name", None),
+                     dry_run=getattr(a, "dry_run", False),
+                     xml_path=getattr(a, "xml", None))
+    print(json.dumps(rep, ensure_ascii=False, indent=1, default=str))
+    return 0 if rep.get("ok") else 1
+
+
 def _print(rep):
     keys = ("ok", "error", "gate", "state", "locked", "timeline", "placed",
             "exact", "timeline_end", "expected_end", "audio_items",
@@ -584,6 +596,15 @@ def main(argv=None):
     sp = sub.add_parser("lock")
     sp.add_argument("state", nargs="?", default="on", choices=["on", "off"])
     sp.set_defaults(fn=cmd_lock)
+    sp = sub.add_parser("ingest",
+                        help="达芬奇当前时间线 → 一份可继续剪的剪映草稿（反方向）")
+    sp.add_argument("--name", default=None,
+                    help="新草稿名（默认 <时间线名>_达芬奇）")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="只读时间线并打印计划，不写草稿")
+    sp.add_argument("--xml", default=None,
+                    help="同时导出 FCPXML（达芬奇 Studio），给剪映「导入工程」用")
+    sp.set_defaults(fn=cmd_ingest)
     sp = sub.add_parser("reset", help="丢掉「没走完的那次送入」记录")
     sp.set_defaults(fn=cmd_reset)
     sp = sub.add_parser("clean", help="清掉变速预渲染缓存")

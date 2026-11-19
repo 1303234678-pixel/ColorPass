@@ -11,7 +11,7 @@ python -m ruff check colorpass tests --line-length 100
 ```
 
 要求 Windows（测试会 import `ctypes.wintypes`），Python 3.9+，开发与 CI 用 3.12。
-没有达芬奇、没有剪映也能跑全部 312 个测试——这是这个项目最重要的一条约束。
+没有达芬奇、没有剪映也能跑全部 321 个测试——这是这个项目最重要的一条约束。
 
 ## 分层规则
 
