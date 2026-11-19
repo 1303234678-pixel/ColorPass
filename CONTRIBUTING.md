@@ -59,7 +59,7 @@ L0  paths.py / probe.py / memscan.py / plain.py    环境与明文来源
 `doctor` 会漏报那个版本的缺项。
 
 **第二层 · CI 跑平台差异。**
-`windows-latest` 与 `macos-14` 各跑一遍全量离线测试 + `colorpass doctor --compact`。
+`windows-latest` 与 `macos-latest` 各跑一遍全量离线测试 + `colorpass doctor --compact`。
 达芬奇对象由 `FakeResolve` 代劳，验的是「平台分支、路径取值、面板加载、
 报告完整性」这些真机上最容易出错的纯 Python 部分。mac 本地不用买机器。
 
