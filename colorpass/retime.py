@@ -159,7 +159,7 @@ _SAFE_ID = re.compile(r"[0-9A-Za-z_-]{1,64}\Z")
 
 
 def clean(draft_id=None):
-    """删掉预渲染缓存。draft_id 为空就清整个 retime 目录。
+    r"""删掉预渲染缓存。draft_id 为空就清整个 retime 目录。
 
     这些是我们自己生成的中转素材（ProRes 体积大：1080p30 约 18 MB/s），
     草稿定稿后可以放心清掉 —— 原素材和剪映草稿都不受影响。

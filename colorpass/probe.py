@@ -18,8 +18,12 @@ videoeditor.dll 的解密导出（开源项目 jy-draftc / jy-draft-port 走的�
 import json
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
+
+WINDOWS = sys.platform.startswith("win")
+MACOS = sys.platform == "darwin"
 
 
 # ---------------------------------------------------------------- 路径探测
@@ -28,14 +32,23 @@ def user_data_dir():
     env = os.environ.get("JY_USERDATA")
     if env:
         return Path(env)
+    if MACOS:
+        return Path(os.path.expanduser("~/Movies/JianyingPro/User Data"))
     base = Path(os.environ.get("LOCALAPPDATA", "")) / "JianyingPro" / "User Data"
     return base
 
 
 def install_dir():
-    """返回 (版本号, 版本目录)。版本目录里应该有 videoeditor.dll。"""
-    apps = Path(os.environ.get("LOCALAPPDATA", "")) / "JianyingPro" / "Apps"
+    """返回 (版本号, 版本目录)。版本目录里应该有 videoeditor.dll。
+
+    这套 `Apps/<版本>/videoeditor.dll` 是 Windows 安装器的布局；macOS 是
+    .app bundle 里的固定结构，没有对应的「版本目录」。返回 (None, None)
+    只影响「装没装/什么版本」这条展示信息，不影响读草稿。
+    """
     best = (None, None)
+    if not WINDOWS:
+        return best
+    apps = Path(os.environ.get("LOCALAPPDATA", "")) / "JianyingPro" / "Apps"
     if not apps.is_dir():
         return best
     for d in apps.iterdir():
@@ -49,6 +62,15 @@ def install_dir():
 
 
 def is_running():
+    if not WINDOWS:
+        # mac/Linux 用 ps；进程名两边都叫 JianyingPro（CapCut 是 CapCut）
+        try:
+            out = subprocess.run(["ps", "-axo", "comm="], capture_output=True,
+                                 timeout=8).stdout.decode("utf-8", errors="replace")
+        except Exception:
+            return False
+        low = out.lower()
+        return any(n in low for n in ("jianyingpro", "jianying", "capcut"))
     try:
         out = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq JianyingPro.exe", "/NH"],
@@ -87,6 +109,10 @@ def _meta_index():
 
 def process_windows():
     """实时枚举剪映可见窗口及所属 PID；只查询，不发送界面操作。"""
+    if not WINDOWS:
+        # Win32 窗口枚举在 mac/Linux 上不存在。返回同一份结构，只是没有窗口
+        # 证据 —— 上层照原样走「认不出当前草稿」，不会抛异常。
+        return {"running": is_running(), "windows": [], "unsupported": True}
     import csv
     import ctypes
     from ctypes import wintypes as W
@@ -126,6 +152,8 @@ def process_windows():
 
 def process_draft_folders(pid):
     """标题不含工程名时，只读查询该窗口进程仍持有的草稿文件句柄。"""
+    if not WINDOWS:
+        return []
     import ctypes as C
     from ctypes import wintypes as W
 
@@ -223,6 +251,13 @@ def resolve_open_draft(windows, *, live_handles=False):
     root = draft_root()
     if not root.is_dir():
         return None, "找不到剪映草稿目录：%s" % root
+    if not WINDOWS and not windows:
+        # 目录找到了，但「当前打开的是哪一个」这一步依赖 Win32 窗口证据。
+        # 与其猜一个「最近修改的草稿」，不如明确说清楚，别让用户拿错草稿去调色。
+        return None, (
+            "已找到剪映草稿目录（%s），但 macOS 上暂时无法自动识别「当前打开的是哪一份」"
+            "（这一步依赖 Windows 的窗口接口）。请在 Windows 上操作，"
+            "或把 `colorpass doctor` 的输出贴到 issue 里帮助补齐 mac 支持。" % root)
     idx = _meta_index()
     folders = []
     for d in root.iterdir():

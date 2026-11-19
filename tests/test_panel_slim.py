@@ -184,16 +184,21 @@ def load_panel(path=None, payload=None):
     if cut > 0:
         src = src[:cut]
     tmp = tempfile.mkdtemp(prefix="jyb_panel_")
-    old = os.environ.get("LOCALAPPDATA")
+    # 面板的数据目录三个平台取值不同：Windows 看 LOCALAPPDATA，mac/Linux 看
+    # COLORPASS_DATA（没有就落到 ~/Library 或 ~/.local）。两个都指到临时目录，
+    # 才不会在 mac 上写进真实的家目录。
+    saved = {k: os.environ.get(k) for k in ("LOCALAPPDATA", "COLORPASS_DATA")}
     os.environ["LOCALAPPDATA"] = tmp
+    os.environ["COLORPASS_DATA"] = tmp
     try:
         ns = {"__name__": "jyb_panel_test", "__file__": str(path)}
         exec(compile(src, str(path), "exec"), ns)
     finally:
-        if old is None:
-            os.environ.pop("LOCALAPPDATA", None)
-        else:
-            os.environ["LOCALAPPDATA"] = old
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
     ui = _FakeUI()
     ns["fusion"] = type("F", (), {"UIManager": ui})()
     ns["bmd"] = _Bmd(_Disp(ui))

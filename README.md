@@ -118,6 +118,7 @@ colorpass pull                       # 达芬奇调色 → 逐段 33³ LUT
 colorpass write                      # LUT → 写回新草稿
 colorpass roundtrip                  # send + pull + write
 colorpass gc --apply                 # 回收可再生缓存（默认只报告）
+colorpass doctor                     # 环境与兼容性报告（JSON，贴 issue 用）
 ```
 
 `plan` 输出的就是 `send` 内部实际使用的计划，包含重叠消解、预渲染标记与跳过原因，
@@ -133,6 +134,7 @@ colorpass/
 ├── draftio.py     草稿语义层：轨道 / 变速 / 转场 / 蒙版 / 复合片段 / 新鲜度
 ├── send.py        草稿 → 达芬奇：落轨计划、变速、停用段、marker
 ├── pull.py        达芬奇 → LUT：marker 身份锚 + ExportLUT
+├── doctor.py      环境与兼容性报告：平台 / 版本 / API 缺项（只读）
 ├── draftbuild.py  克隆草稿并追加 LUT 材质
 ├── write.py       写回编排 + 结构断言（structure_diff）
 ├── gc.py          缓存回收
@@ -147,10 +149,24 @@ colorpass/
 
 | 组件 | 实测版本 | 备注 |
 |---|---|---|
-| Windows | 10 / 11 | 依赖 `%LOCALAPPDATA%` 与 `ReadProcessMemory` |
-| 剪映专业版 | 11.7.0 | 正文加密；字段行为见 [docs/剪映草稿字段.md](docs/剪映草稿字段.md) |
-| 达芬奇 | 18+（本地 20.x） | 需 Workflow Integration 支持 |
+| Windows | 10 / 11 | 完整链路；依赖 `%LOCALAPPDATA%` 与 `ReadProcessMemory` |
+| macOS | 未真机联调 | 数据目录、剪映路径、面板解释器、脚本模块搜索路径均已按 mac 取值，CI 在 `macos-14` 上跑全量离线测试；仍缺「窗口级」草稿识别（见下） |
+| 剪映专业版 | 11.7.0 / 11.9 | 正文加密；字段行为见 [docs/剪映草稿字段.md](docs/剪映草稿字段.md) |
+| 达芬奇 | 18+（本地 20.x） | 需 Workflow Integration 支持；API 按 `hasattr` 判断，不按版本号 |
 | Python | 3.9+（开发与 CI 用 3.12） | 无第三方硬依赖 |
+
+**为什么不用版本号判断能力。** 达芬奇的脚本 API 是增量加的，同一个大版本内部
+也会有增删，所以代码里一律 `hasattr` 探测 + 降级（例如 `SetClipEnabled` 缺失时
+停用片段照常落轨，只在报告里标注未生效）。想知道某个组合上到底缺哪些方法，
+跑一次 `colorpass doctor`，看 `resolve.api.missing`。
+
+**没有的机器怎么验。** 兼容性不靠开发者凑齐所有硬件，而是靠三件事叠加：
+
+1. **能探测的不写死** —— 缺方法的路径有降级、有报告，未测过的版本大多能直接跑通；
+2. **CI 覆盖平台差异** —— `windows-latest` 与 `macos-14` 各跑一遍全量离线测试
+   （达芬奇装不进 CI，但平台分支全在纯 Python 这半边）；
+3. **用户回帖补矩阵** —— `colorpass doctor` 输出一份 JSON，含系统、达芬奇版本、
+   每个对象上缺哪几个方法、路径与实际加载到的脚本模块位置，贴进 issue 即可定位。
 
 剪映的加密与内存行为属内部实现，升级后可能变化；这类情况由 `docs/剪映草稿字段.md`
 中的版本矩阵记录，并以 issue 模板 `compat` 收集反馈。
@@ -182,6 +198,8 @@ colorpass/
 - 不绕过剪映授权限制，不解析他人文件，不修改剪映安装目录。
 - 设置 `COLORPASS_NO_MEMSCAN=1` 可完全关闭内存扫描，仅用缓存与载入备份
   （代价：从未读取过的新草稿需先执行一次送入并保持剪映打开）。
+- `colorpass doctor` 只输出本机环境信息（系统、版本、路径、API 有无），
+  不含素材内容、时间线片段与草稿正文；贴 issue 前可自行过一眼。
 - 本项目与字节跳动、Blackmagic Design 均无关联。
 
 ## 开发与测试
@@ -192,8 +210,9 @@ python -m unittest discover -s tests -p "test_*.py"
 python -m ruff check colorpass tests --line-length 100
 ```
 
-312 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
-Ubuntu 静态检查与 Windows 3.9 / 3.12 全量测试。
+323 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
+Ubuntu 静态检查、Windows 3.9 / 3.12 与 macOS 3.9 / 3.12 全量测试，
+并在无达芬奇的环境下跑一次 `colorpass doctor` 验证报告完整性。
 
 ## 许可证
 

@@ -12,6 +12,7 @@
     python -m colorpass.cli reset              丢掉「没走完的那次送入」
     python -m colorpass.cli clean [--draft-id] 清变速预渲染缓存
     python -m colorpass.cli gc [--apply]       回收过期缓存（默认只报告，不动手）
+    python -m colorpass.cli doctor             环境与兼容性报告（JSON，贴 issue 用）
 
 前置条件是硬的（用户要求，也是实测后果）：
   · **送入**要求剪映在跑且目标草稿确实打开（明文只在它内存里）、达芬奇在跑
@@ -521,6 +522,12 @@ def _print(rep):
         print("!!", rep["error"])
 
 
+def cmd_doctor(a):
+    """不给用户看热闹，只收兼容性数据：哪个版本缺哪个 API，一眼可读。"""
+    from . import doctor
+    return doctor.main(["--compact"] if getattr(a, "compact", False) else [])
+
+
 def main(argv=None):
     # 面板是 Popen 到文件的，Windows 下默认按 cp936 写，面板再按 utf-8 读就是
     # 一片「10��30��」的乱码。这里把三条标准流钉死成 utf-8，谁的父进程都一样。
@@ -603,6 +610,11 @@ def main(argv=None):
                     help="只收可再生的中间产物（变速预渲染 / cube 工作副本），"
                          "报告与底稿快照一律保留")
     sp.set_defaults(fn=cmd_gc)
+
+    sp = sub.add_parser("doctor",
+                        help="环境与兼容性报告：平台、达芬奇版本、API 缺项、路径（只读）")
+    sp.add_argument("--compact", action="store_true", help="单行 JSON，便于贴进 issue")
+    sp.set_defaults(fn=cmd_doctor)
 
     a = p.parse_args(argv)
     if not getattr(a, "fn", None):

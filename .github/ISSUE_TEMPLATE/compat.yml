@@ -1,13 +1,42 @@
 name: 版本不兼容
-description: 剪映或达芬奇升级后失效
+description: 剪映或达芬奇升级后失效，或换了平台（macOS / 旧版达芬奇）
 title: "[compat] "
 labels: ["compatibility"]
 body:
   - type: markdown
     attributes:
       value: |
-        剪映的明文路线依赖它内部行为，升级后失效是可预期的。请提供版本号与失败现象，
-        维护者会更新 [版本矩阵](../blob/main/docs/剪映草稿字段.md)。
+        剪映的明文路线依赖它内部行为，升级后失效是可预期的；达芬奇的脚本 API
+        也会在版本间增删。**先跑一次下面的命令**，它把「哪一步不成立、缺哪个方法」
+        一次说清，比贴截图有用得多：
+
+        ```bash
+        colorpass doctor
+        ```
+
+        输出里有系统、达芬奇版本、每个对象缺哪几个方法、实际加载到的脚本模块路径。
+        不含素材内容与草稿正文，贴之前可以自己过一眼。
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: colorpass doctor 输出
+      description: 整段粘贴即可；嫌长用 `colorpass doctor --compact` 出单行 JSON
+      render: json
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 系统
+      options:
+        - Windows 10 / 11
+        - macOS（Apple Silicon）
+        - macOS（Intel）
+        - Linux
+    validations:
+      required: true
 
   - type: input
     id: jianying
@@ -15,27 +44,28 @@ body:
       label: 剪映版本（升级前 → 升级后）
       placeholder: 11.7.0 → 12.0.1
     validations:
-      required: true
+      required: false
 
   - type: input
     id: resolve
     attributes:
-      label: 达芬奇版本
+      label: 达芬奇版本（若 doctor 里没带出来）
+      placeholder: 18.6.6 / 19.1.3 / 20.0.1
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: symptom
     attributes:
       label: 现象
-      description: 例如「check 报 no_plaintext」「送入后段数不对」「写回后剪映打不开」
+      description: 例如「check 报 no_plaintext」「送入后段数不对」「写回后剪映打不开」「mac 上认不出当前草稿」
     validations:
       required: true
 
   - type: textarea
     id: check
     attributes:
-      label: colorpass check 输出
+      label: colorpass check 输出（可选）
       render: json
     validations:
       required: false

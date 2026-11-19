@@ -25,6 +25,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -36,12 +37,30 @@ import traceback
 #   python    COLORPASS_PYTHON → config.json 的 python → 常见安装位置（取版本最高）
 #             → PATH 上的 python
 #   product   有 colorpass/cli.py 的目录：COLORPASS_HOME → config.json 的 product
-#             → %LOCALAPPDATA%\ColorPass\product → 当前目录
+#             → <数据目录>/product → 当前目录
 #
 # config.json 由 `python -m colorpass.install` 写，里面记着「装的时候用的是谁」。
 # 这样 pip 安装、克隆源码、绿色解压三种情况都能对上，不用改代码。
-BASE_DIR = os.path.join(os.environ.get("LOCALAPPDATA")
-                        or os.path.expanduser("~"), "ColorPass")
+#
+# 数据目录跟 CLI 的 paths.py 保持同一套规则（Windows %LOCALAPPDATA%，mac
+# ~/Library/Application Support）—— 两边算出来不一样的话，面板就找不到
+# install 写下的 config.json，表现是「装了却还说找不到源码目录」。
+
+
+def _data_dir():
+    env = os.environ.get("COLORPASS_DATA")
+    if env:
+        return env
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Application Support", "ColorPass")
+    if sys.platform.startswith("win"):
+        return os.path.join(os.environ.get("LOCALAPPDATA") or home, "ColorPass")
+    return os.path.join(os.environ.get("XDG_DATA_HOME") or
+                        os.path.join(home, ".local", "share"), "ColorPass")
+
+
+BASE_DIR = _data_dir()
 CONF_PATH = os.path.join(BASE_DIR, "config.json")
 
 
@@ -78,6 +97,14 @@ def _find_python():
     for c in (os.environ.get("COLORPASS_PYTHON"), conf.get("python")):
         if c and os.path.isfile(c):
             return c
+    if sys.platform == "darwin":
+        # Homebrew(Apple Silicon / Intel)、python.org 安装包、系统自带
+        direct = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3",
+                  "/usr/bin/python3"]
+        found = [p for p in direct if os.path.isfile(p)]
+        if found:
+            return found[0]      # 顺序即优先级：homebrew > 官方包 > 系统
+        return "python3"
     pats = [
         os.path.join(os.environ.get("LOCALAPPDATA") or "",
                      "Programs", "Python", "Python3*", "python.exe"),
@@ -99,7 +126,8 @@ PRODUCT = _find_product()
 # 不再借用 drx\generated\ —— 那个目录属于已移除的一级调色插件。
 OUT = os.path.join(BASE_DIR, "panel")
 LOG = os.path.join(OUT, "colorpass_panel.log")
-NO_WIN = 0x08000000
+# CREATE_NO_WINDOW 只在 Windows 上认；POSIX 传非零会 ValueError
+NO_WIN = 0x08000000 if sys.platform.startswith("win") else 0
 
 # 找不到源码目录时，面板唯一的正确动作是「说清楚怎么修」，而不是弹一个
 # 子进程报错让人去猜。三条路按从省事到麻烦排。

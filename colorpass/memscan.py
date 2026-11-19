@@ -5,45 +5,73 @@
 这样连「右键保存为预设」都不用了。
 
 只读本机用户自己的剪映进程，读取后把命中片段 dump 成文件供检查。
+
+平台
+----
+这条路全是 Win32 调用（OpenProcess / VirtualQueryEx / ReadProcessMemory），
+只有 Windows 能用。但模块本身必须在 mac / Linux 上照样 import —— 顶层写
+`ctypes.windll` 的话，`import colorpass.draftio` 会直接 AttributeError，
+连 `colorpass check` 都跑不起来。所以 Windows 相关的声明整段收进分支里：
+
+  AVAILABLE  True 才真的能扫
+  mac/Linux  扫描入口一律返回空，草稿读取自动退到「本地缓存 → 载入备份」两级
+
+想彻底关掉扫描（包括 Windows）用 `COLORPASS_NO_MEMSCAN=1`，那是 draftio 的事，
+这里只负责「这台机器有没有这个能力」。
 """
-import ctypes
 import os
 import subprocess
-from ctypes import wintypes
+import sys
 
-PROCESS_VM_READ = 0x0010
-PROCESS_QUERY_INFORMATION = 0x0400
-MEM_COMMIT = 0x1000
-READABLE = {0x02, 0x04, 0x08, 0x20, 0x40, 0x80}  # R / RW / WC / XR / XRW / XWC
+WINDOWS = sys.platform.startswith("win")
+AVAILABLE = WINDOWS
 
+if WINDOWS:
+    import ctypes
+    from ctypes import wintypes
 
-class MBI(ctypes.Structure):
-    _fields_ = [
-        ("BaseAddress", ctypes.c_void_p),
-        ("AllocationBase", ctypes.c_void_p),
-        ("AllocationProtect", wintypes.DWORD),
-        ("PartitionId", wintypes.WORD),
-        ("RegionSize", ctypes.c_size_t),
-        ("State", wintypes.DWORD),
-        ("Protect", wintypes.DWORD),
-        ("Type", wintypes.DWORD),
-    ]
+    PROCESS_VM_READ = 0x0010
+    PROCESS_QUERY_INFORMATION = 0x0400
+    MEM_COMMIT = 0x1000
+    READABLE = {0x02, 0x04, 0x08, 0x20, 0x40, 0x80}  # R / RW / WC / XR / XRW / XWC
 
+    class MBI(ctypes.Structure):
+        _fields_ = [
+            ("BaseAddress", ctypes.c_void_p),
+            ("AllocationBase", ctypes.c_void_p),
+            ("AllocationProtect", wintypes.DWORD),
+            ("PartitionId", wintypes.WORD),
+            ("RegionSize", ctypes.c_size_t),
+            ("State", wintypes.DWORD),
+            ("Protect", wintypes.DWORD),
+            ("Type", wintypes.DWORD),
+        ]
 
-k32 = ctypes.windll.kernel32
-k32.OpenProcess.restype = wintypes.HANDLE
-k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-k32.CloseHandle.argtypes = [wintypes.HANDLE]
-k32.VirtualQueryEx.restype = ctypes.c_size_t
-k32.VirtualQueryEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p,
-                               ctypes.POINTER(MBI), ctypes.c_size_t]
-k32.ReadProcessMemory.restype = wintypes.BOOL
-k32.ReadProcessMemory.argtypes = [wintypes.HANDLE, ctypes.c_void_p,
-                                  ctypes.c_void_p, ctypes.c_size_t,
-                                  ctypes.POINTER(ctypes.c_size_t)]
+    k32 = ctypes.windll.kernel32
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    k32.VirtualQueryEx.restype = ctypes.c_size_t
+    k32.VirtualQueryEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p,
+                                   ctypes.POINTER(MBI), ctypes.c_size_t]
+    k32.ReadProcessMemory.restype = wintypes.BOOL
+    k32.ReadProcessMemory.argtypes = [wintypes.HANDLE, ctypes.c_void_p,
+                                      ctypes.c_void_p, ctypes.c_size_t,
+                                      ctypes.POINTER(ctypes.c_size_t)]
+else:
+    ctypes = None
+    wintypes = None
+    k32 = None
+    MBI = None
+    PROCESS_VM_READ = 0x0010
+    PROCESS_QUERY_INFORMATION = 0x0400
+    MEM_COMMIT = 0x1000
+    READABLE = set()
 
 
 def pids():
+    if not AVAILABLE:
+        return []
     out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
                          capture_output=True,
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
@@ -65,6 +93,8 @@ def pids_by_mem():
     剪映有十来个进程（渲染、解码、崩溃上报……），草稿只在占内存最大的
     主进程里。先扫大的能少读几 GB —— 实测从 20 秒降到 4 秒。
     """
+    if not AVAILABLE:
+        return []
     out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True,
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
     mem = {}
@@ -80,6 +110,8 @@ def pids_by_mem():
 
 
 def read(h, addr, size):
+    if not AVAILABLE:
+        return b""
     buf = ctypes.create_string_buffer(size)
     n = ctypes.c_size_t(0)
     if not k32.ReadProcessMemory(h, addr, buf, size, ctypes.byref(n)):
@@ -250,7 +282,7 @@ def extract_open_draft(pid=None, uuid_hint=None, deadline=None, target_bytes=Non
          挑「体量最接近」的那份，并把「几份结构是否一致」一并报出去。
     """
     import time
-    if not uuid_hint:
+    if not uuid_hint or not AVAILABLE:
         return None, None
     t0 = time.monotonic()
     targets = [pid] if pid else pids_by_mem()
@@ -353,6 +385,8 @@ def extract_open_draft(pid=None, uuid_hint=None, deadline=None, target_bytes=Non
 
 def regions(h):
     out = []
+    if not AVAILABLE:
+        return out
     addr = 0
     mbi = MBI()
     while True:
@@ -370,6 +404,8 @@ def regions(h):
 
 
 def scan_one(pid, needles, dump_dir):
+    if not AVAILABLE:
+        return []
     h = k32.OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, False, pid)
     if not h:
         return []
@@ -415,6 +451,10 @@ def main():
     import time
 
     from . import paths
+
+    if not AVAILABLE:
+        print("内存扫描只支持 Windows（Win32 进程 API）。当前平台：", sys.platform)
+        return 2
 
     t0 = time.time()
     needles = []

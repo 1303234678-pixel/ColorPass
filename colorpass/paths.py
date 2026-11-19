@@ -5,20 +5,45 @@
 之前 cube 落在会话工作区 `rs-bridge/out/luts/`，工作区一被清理，剪映里就
 「LUT 丢失」。这里把三个目录定死：
 
-  LUT_ROOT    %LOCALAPPDATA%\\ColorPass\\luts\\<草稿ID>\\   取回调色的工作副本
-  RUN_ROOT    %LOCALAPPDATA%\\ColorPass\\runs\\<草稿ID>\\   每次动作的报告与日志
+  LUT_ROOT    <数据目录>/luts/<草稿ID>/    取回调色的工作副本
+  RUN_ROOT    <数据目录>/runs/<草稿ID>/    每次动作的报告与日志
   EMBED_DIR   写回时把 cube 复制进新草稿目录下的 Resources/ColorPass/
 
 第三条是关键：LUT 跟着草稿走。草稿被复制、迁移、换机器，cube 都还在，
 不依赖任何工作区或临时目录。
+
+数据目录按各平台惯例放（Windows 的 %LOCALAPPDATA% 搬到 mac 上会落在
+`~/Library/Caches` 那种会被系统清理的位置，不能照抄）：
+  Windows  %LOCALAPPDATA%\\ColorPass
+  macOS    ~/Library/Application Support/ColorPass
+  Linux    ~/.local/share/ColorPass
+`COLORPASS_DATA` 可以整个覆盖，绿色版/测试用。
 """
 import os
+import sys
 
 PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 PRODUCT_DIR = os.path.dirname(PKG_DIR)
 
-BASE = os.path.join(os.environ.get("LOCALAPPDATA") or
-                    os.path.expanduser("~"), "ColorPass")
+WINDOWS = sys.platform.startswith("win")
+MACOS = sys.platform == "darwin"
+
+
+def data_root():
+    """数据目录（不创建）。"""
+    env = os.environ.get("COLORPASS_DATA")
+    if env:
+        return os.path.abspath(env)
+    home = os.path.expanduser("~")
+    if WINDOWS:
+        return os.path.join(os.environ.get("LOCALAPPDATA") or home, "ColorPass")
+    if MACOS:
+        return os.path.join(home, "Library", "Application Support", "ColorPass")
+    return os.path.join(os.environ.get("XDG_DATA_HOME") or
+                        os.path.join(home, ".local", "share"), "ColorPass")
+
+
+BASE = data_root()
 LUT_ROOT = os.path.join(BASE, "luts")
 RUN_ROOT = os.path.join(BASE, "runs")
 RETIME_ROOT = os.path.join(BASE, "retime")

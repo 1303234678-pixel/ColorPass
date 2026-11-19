@@ -1223,6 +1223,10 @@ class TestMaskAndCopies(unittest.TestCase):
     def _fake_scan(self, drafts, target):
         """把 extract_open_draft 的内部依赖全部打桩，只测「挑哪一份」。"""
         from colorpass import memscan as MS
+        if not MS.AVAILABLE:
+            # 内存扫描是 Win32 专用（OpenProcess/ReadProcessMemory）。
+            # mac/Linux 上模块能 import，但入口按设计直接返回空 —— 这里没得测。
+            self.skipTest("内存扫描仅 Windows 可用")
         blob = b'{"id":"UUID-1","version":1,' + b" " * 400
 
         def fake_regions(h):

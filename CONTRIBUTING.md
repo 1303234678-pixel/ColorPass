@@ -11,7 +11,7 @@ python -m ruff check colorpass tests --line-length 100
 ```
 
 要求 Windows（测试会 import `ctypes.wintypes`），Python 3.9+，开发与 CI 用 3.12。
-没有达芬奇、没有剪映也能跑全部 312 个测试——这是这个项目最重要的一条约束。
+没有达芬奇、没有剪映也能跑全部 323 个测试——这是这个项目最重要的一条约束。
 
 ## 分层规则
 
@@ -47,6 +47,39 @@ L0  paths.py / probe.py / memscan.py / plain.py    环境与明文来源
 - [ ] 改了行为就同步改 `README.md` / `docs/`
 - [ ] 没有提交真实草稿、素材、导出的 `.cube` 或日志
 - [ ] 中文注释与提交信息保持一致（这个仓库是中文优先的）
+
+## 兼容性：没有那台机器怎么验
+
+达芬奇装在 CI 里跑不起来（许可 + GUI），剪映更是只能用真实草稿。所以兼容性
+靠三层，从便宜到贵：
+
+**第一层 · 能力探测，不认版本号。**
+调任何可能缺的方法前先 `hasattr`，缺了就降级并把「没生效」写进报告，不抛异常。
+`resolve.API_GROUPS` 是唯一的方法清单 —— 新增 API 调用时同时加进去，否则
+`doctor` 会漏报那个版本的缺项。
+
+**第二层 · CI 跑平台差异。**
+`windows-latest` 与 `macos-14` 各跑一遍全量离线测试 + `colorpass doctor --compact`。
+达芬奇对象由 `FakeResolve` 代劳，验的是「平台分支、路径取值、面板加载、
+报告完整性」这些真机上最容易出错的纯 Python 部分。mac 本地不用买机器。
+
+**第三层 · 让用户回帖补矩阵。**
+自己没装那个版本时，请对方跑：
+
+```bash
+colorpass doctor          # 完整 JSON
+colorpass doctor --compact  # 单行，贴 issue 更方便
+```
+
+`resolve.api.missing` 就是「这个组合缺哪些方法」，`resolve.version` /
+`resolve.product` / `jianying.installed_version` 是版本，`resolve.module` 是实际
+加载到的脚本模块路径（`COLORPASS_SCRIPT_MODULES` 可指向另一份安装，用来在同机
+并存的两个达芬奇版本间切换验证）。拿到回帖后，把结论写进 README 的兼容性表。
+
+macOS 目前还缺一块：**识别「剪映当前打开的是哪一份草稿」依赖 Win32 窗口接口**，
+所以 `probe.resolve_open_draft` 在 mac 上会明确报「无法自动识别」而不是猜一个
+最近修改的草稿。要补这块需要真机调试（AppleScript / Accessibility 或
+`NSWorkspace` 路线），有 mac 的贡献者可以带着 `doctor` 输出开 issue 讨论。
 
 ## 加一个「不送」的能力
 

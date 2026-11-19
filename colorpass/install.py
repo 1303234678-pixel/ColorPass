@@ -26,14 +26,37 @@ PANEL_NAME = "ColorPass.py"
 # 改名前的面板文件名：不删掉的话，达芬奇菜单里会同时出现两个入口
 LEGACY_PANEL_NAME = "JYBridge.py"
 CONF_PATH = os.path.join(paths.BASE, "config.json")
-TARGETS = [
-    os.path.join(os.environ.get("PROGRAMDATA", r"C:/ProgramData"),
-                 "Blackmagic Design", "DaVinci Resolve", "Support",
-                 "Workflow Integration Plugins"),
-    os.path.join(os.environ.get("APPDATA", ""),
-                 "Blackmagic Design", "DaVinci Resolve", "Support",
-                 "Fusion", "Scripts", "Utility"),
-]
+
+
+def _targets():
+    """面板该复制到哪几个目录 —— 按平台给，别把 Windows 的 PROGRAMDATA 套到 mac。
+
+    Workflow Integration 的插件目录三个平台各一处；Fusion 的 Utility 目录是
+    老路径，留着兼容 17.x 与面板脚本方式，两处都放不会重复出现菜单项。
+    """
+    if paths.WINDOWS:
+        return [
+            os.path.join(os.environ.get("PROGRAMDATA", r"C:/ProgramData"),
+                         "Blackmagic Design", "DaVinci Resolve", "Support",
+                         "Workflow Integration Plugins"),
+            os.path.join(os.environ.get("APPDATA", ""),
+                         "Blackmagic Design", "DaVinci Resolve", "Support",
+                         "Fusion", "Scripts", "Utility"),
+        ]
+    if paths.MACOS:
+        home = os.path.expanduser("~")
+        return [
+            "/Library/Application Support/Blackmagic Design/DaVinci Resolve"
+            "/Support/Workflow Integration Plugins",
+            os.path.join(home, "Library/Application Support/Blackmagic Design"
+                                "/DaVinci Resolve/Support/Workflow Integration Plugins"),
+            os.path.join(home, "Library/Application Support/Blackmagic Design"
+                                "/DaVinci Resolve/Fusion/Scripts/Utility"),
+        ]
+    return []
+
+
+TARGETS = _targets()
 
 
 def write_config(product=None, python=None):
