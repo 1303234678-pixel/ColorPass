@@ -2,10 +2,9 @@
 
 只做一件事：**把剪映的剪辑送进达芬奇，调完色再写回一份新草稿。**
 
-面板上有四个动作：
+面板上只有三个动作：
   ① 送入达芬奇      —— 剪映当前草稿 → 达芬奇时间线（逐段按帧号摆放）
   ② 写回剪映        —— 达芬奇逐段 ExportLUT → 克隆出新的剪映草稿
-  ③ 送入剪映        —— 达芬奇当前时间线 → 一份新的、可继续剪的剪映草稿
   锁定 / 解锁轨道   —— 防止在达芬奇里误改剪辑（调色不受影响）
 
 参考仿色、非常规偏色、一级调色三个功能已从本插件移除（2026-11-19）。
@@ -273,11 +272,6 @@ class Panel(object):
                 self.ui.Button({"ID": "btnWrite",
                                 "Text": "② 写回剪映（按送入那版）", "Weight": 0.5}),
             ]),
-            self.ui.HGroup({"Weight": 0}, [
-                self.ui.Button({"ID": "btnIngest",
-                                "Text": "③ 送入剪映（达芬奇当前时间线）",
-                                "Weight": 1.0}),
-            ]),
         ]
         if name_row is not None:
             rows.append(name_row)
@@ -302,7 +296,7 @@ class Panel(object):
         ]
         title = "ColorPass · 剪映 ↔ 达芬奇"
         self.win = self.disp.AddWindow(
-            {"ID": WIN_ID, "Geometry": [180, 90, 580, 402],
+            {"ID": WIN_ID, "Geometry": [180, 90, 580, 372],
              "WindowTitle": title}, self.ui.VGroup(rows))
         if self.win is None and name_row is not None:
             # LineEdit 在这个 Fusion 版本上不被接受时会整窗失败：去掉输入框重来，
@@ -310,12 +304,12 @@ class Panel(object):
             note("AddWindow failed with LineEdit, retry without it")
             rest = [r for r in rows if r is not name_row]
             self.win = self.disp.AddWindow(
-                {"ID": WIN_ID + "_b", "Geometry": [180, 90, 580, 372],
+                {"ID": WIN_ID + "_b", "Geometry": [180, 90, 580, 342],
                  "WindowTitle": title}, self.ui.VGroup(rest))
         if self.win is None:
             note("AddWindow returned None, retry with fallback id")
             self.win = self.disp.AddWindow(
-                {"ID": WIN_ID + "_c", "Geometry": [180, 90, 580, 372],
+                {"ID": WIN_ID + "_c", "Geometry": [180, 90, 580, 342],
                  "WindowTitle": title}, self.ui.VGroup([]))
         if self.win is None:
             note("AddWindow failed twice, abort")
@@ -335,8 +329,6 @@ class Panel(object):
         self.win.On.btnSend.Clicked = lambda _ev: self._on_send()
         self.win.On.btnWrite.Clicked = lambda _ev: self.start_job(
             "write", "② 写回剪映", extra=self._write_extra())
-        self.win.On.btnIngest.Clicked = lambda _ev: self.start_job(
-            "ingest", "③ 送入剪映")
         self.win.On.btnLock.Clicked = lambda _ev: self.start_job(
             "lock", "切换轨道锁", extra=["off"] if self._lock_state else ["on"])
         self.win.On.btnRefresh.Clicked = lambda _ev: self.refresh_draft()
@@ -443,8 +435,6 @@ class Panel(object):
         can_free = (self._free_bytes + self._free_extra) > 0
         self._set_enabled("btnSend", self._has_draft and not busy)
         self._set_enabled("btnWrite", self._has_draft and not busy)
-        # ③ 的方向反过来：它读达芬奇、写剪映，不需要剪映里先有草稿打开
-        self._set_enabled("btnIngest", not busy)
         self._set_enabled("btnRefresh", not busy)
         self._set_enabled("btnLock", not busy)
         self._set_enabled("btnGc", not busy and can_free)
@@ -750,23 +740,6 @@ class Panel(object):
             if rep.get("alignment_ok") is False:
                 msg += "\n注意：对齐校验未通过，建议在剪映里抽查"
             return msg
-        if action == "ingest":
-            d = rep.get("draft") or {}
-            msg = "已生成剪映草稿「%s」：%d 段 · %d 轨 · %s 秒" % (
-                d.get("name") or "新草稿", rep.get("clips") or 0,
-                rep.get("tracks") or 0, rep.get("duration_s") or 0)
-            st = rep.get("stats") or {}
-            extra = []
-            if st.get("retimed"):
-                extra.append("变速 %d 段" % st["retimed"])
-            if st.get("disabled"):
-                extra.append("停用 %d 段" % st["disabled"])
-            if st.get("no_media"):
-                extra.append("跳过 %d 段无素材" % st["no_media"])
-            if extra:
-                msg += "\n" + " · ".join(extra)
-            msg += "\n切回剪映首页即可看到（不用重启）"
-            return msg
         if action == "lock":
             if str(rep.get("state")) == "on":
                 return "轨道已锁定：%d 条（调色不受影响）" % (rep.get("locked") or 0)
@@ -930,7 +903,6 @@ class Panel(object):
 
     def _popup_fail(self, j, rep, txt, code):
         titles = {"send": "送入失败", "write": "写回失败",
-                  "ingest": "送入剪映失败",
                   "lock": "锁定失败", "gc": "清理失败"}
         title = titles.get(j["action"], "操作失败")
         body = self._fail_text(j["action"], rep, txt, code)

@@ -15,7 +15,6 @@ ColorPass 是达芬奇的 Workflow Integration 插件，用于在剪映专业版
 | 读草稿 | 解密正文的三级来源（本地缓存 / 载入备份 / 进程内存），语义层解析轨道与素材 |
 | 落轨 | 绝对帧号 `AppendToTimeline`，逐段 marker + custom data 作为身份锚 |
 | 回写 | 深拷贝底稿快照，仅追加一条 LUT 效果材质；落盘前做结构断言 |
-| 反向 | 达芬奇当前时间线 → 一份可继续剪的剪映草稿：多轨、倍速、停用段，不经过 XML |
 
 ---
 
@@ -112,7 +111,6 @@ python -m pip install -e ".[ffmpeg]"    # 变速预渲染（缺省时退回近�
 
 ```bash
 colorpass check                      # 读取当前打开的草稿，输出结构报告（JSON）
-colorpass ingest [--dry-run]         # 达芬奇当前时间线 → 新的剪映草稿（反方向）
 colorpass plan                       # 只计算落轨计划（dry-run，不需要达芬奇）
 colorpass status                     # 面板使用的状态汇总
 colorpass send                       # 草稿 → 达芬奇时间线
@@ -135,7 +133,6 @@ colorpass/
 ├── draftio.py     草稿语义层：轨道 / 变速 / 转场 / 蒙版 / 复合片段 / 新鲜度
 ├── send.py        草稿 → 达芬奇：落轨计划、变速、停用段、marker
 ├── pull.py        达芬奇 → LUT：marker 身份锚 + ExportLUT
-├── ingest.py      达芬奇时间线 → 剪映草稿：轨道/倍速/停用段（反方向）
 ├── draftbuild.py  克隆草稿并追加 LUT 材质
 ├── write.py       写回编排 + 结构断言（structure_diff）
 ├── gc.py          缓存回收
@@ -195,7 +192,7 @@ python -m unittest discover -s tests -p "test_*.py"
 python -m ruff check colorpass tests --line-length 100
 ```
 
-321 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
+312 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
 Ubuntu 静态检查与 Windows 3.9 / 3.12 全量测试。
 
 ## 许可证
