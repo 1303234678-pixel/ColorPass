@@ -668,8 +668,11 @@ class TestSendSpeed(SendBase):
                     c["src_us"] = 0
             return baked, []
 
-        with mock.patch("jybridge.retime.bake_plan",
-                        side_effect=fake_bake_plan):
+        # 显式声明「这台机器有 ffmpeg」：否则没装 ffmpeg 的环境（CI）会先退回
+        # slot 模式，根本走不到预渲染，这条用例就成了环境探测器。
+        with mock.patch("jybridge.retime.available", return_value=True), \
+                mock.patch("jybridge.retime.bake_plan",
+                           side_effect=fake_bake_plan):
             rep = self.run_send(d, speed="bake")
         self.assertTrue(rep["ok"], rep.get("error"))
         self.assertEqual(rep["baked"], baked)

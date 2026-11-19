@@ -563,7 +563,9 @@ def place_video(mp, c, idx):
 
 
 def run(tag=paths.TIMELINE_TAG, allow_stale=False, speed_mode="slot"):
-    rep = {"ok": False, "action": "send", "speed_mode": speed_mode}
+    # baked 一开始就占位：没有 ffmpeg 时流程走不到预渲染，报告字段也要稳定存在，
+    # 否则调用方（面板、上层脚本）得为「有没有这个键」分两种情况写。
+    rep = {"ok": False, "action": "send", "speed_mode": speed_mode, "baked": []}
     if speed_mode == "bake":
         # 面板上的变速开关已删掉，默认就用 bake（唯一能让达芬奇里的帧序与剪映
         # 一致的落地方式）。万一这台机器没有 ffmpeg，别直接失败，退回 slot 并

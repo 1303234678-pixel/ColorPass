@@ -26,7 +26,9 @@ dependencies = []
 cover = ["pillow>=9"]
 # 变速预渲染需要 ffmpeg。没装时退回「按源帧数摆放」，不报错。
 ffmpeg = ["imageio-ffmpeg>=0.4"]
-dev = ["ruff>=0.5", "vulture>=2.11"]
+# CI 也装 imageio-ffmpeg：否则变速预渲染那 7 条用例在 CI 上被 skip，
+# 「本地过、CI 过」但实际没测过真正的转码路径。
+dev = ["ruff>=0.5", "vulture>=2.11", "imageio-ffmpeg>=0.4"]
 
 [project.scripts]
 jybridge = "jybridge.cli:main"
