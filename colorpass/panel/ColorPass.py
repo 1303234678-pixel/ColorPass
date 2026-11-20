@@ -2,10 +2,13 @@
 
 只做一件事：**把剪映的剪辑送进达芬奇，调完色再写回一份新草稿。**
 
-面板上只有三个动作：
-  ① 送入达芬奇      —— 剪映当前草稿 → 达芬奇时间线（逐段按帧号摆放）
-  ② 写回剪映        —— 达芬奇逐段 ExportLUT → 克隆出新的剪映草稿
-  锁定 / 解锁轨道   —— 防止在达芬奇里误改剪辑（调色不受影响）
+面板上只有两个动作：
+  送入达芬奇   —— 剪映当前草稿 → 达芬奇时间线（逐段按帧号摆放）
+  写回剪映     —— 达芬奇逐段 ExportLUT → 克隆出新的剪映草稿
+
+写回读的是「上一次成功送入」的快照，所以没送入过时它和草稿名输入框都是灰的。
+页脚只剩一个「诊断」：锁定轨道、清理缓存只是命令行能力（colorpass lock / gc），
+手动刷新改由面板自己定时做（见 AUTO_REFRESH）。
 
 参考仿色、非常规偏色、一级调色三个功能已从本插件移除（2026-11-19）。
 它们的代码移到了 `_stripped/`，面板不再加载，也不再依赖 `drx/PrimaryBalance.py`。
@@ -172,10 +175,17 @@ _NO_PRODUCT = (
 ENV = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
 
 WIN_ID = "jybWin"
-WIN_W, WIN_H = 460, 470
+WIN_W, WIN_H = 460, 456
 SLEEP_IDLE = 0.05
 SLEEP_BUSY = 0.02
 STATUS_TIMEOUT = 15          # 秒；旧版 25 秒在慢盘上会明显拖住面板
+
+# 没有「刷新」按钮了，面板自己看：空闲时每 10 秒问一次 status。为什么不是
+# 更密 —— 每次都是一整个子进程（源码模式约 1 秒），追太紧等于后台常驻一个核。
+# 一次查询超过 SLOW_SCAN 秒说明这台机器读剪映内存慢，退到 30 秒，别越拖越堆。
+AUTO_REFRESH = 10.0
+AUTO_REFRESH_SLOW = 30.0
+SLOW_SCAN = 2.5
 
 
 def note(msg):
@@ -187,23 +197,19 @@ def note(msg):
         pass
 
 
-def human_bytes(n):
-    """12345678 → 11.8 MB。
+def elide(text, n):
+    """长草稿名截断加省略号 —— 面板只有一行给它，剪到半个字更像坏了。"""
+    text = str(text or "")
+    return text if len(text) <= n else text[:n - 1] + "…"
 
-    面板跑在达芬奇的 Fusion 进程里，sys.path 上没有这个工程，所以不能
-    `from colorpass import gc` —— 这份格式化函数就在本地留一份。
+
+def short_stamp(s):
+    """「2026-11-19 23:47:41」→「11-19 23:47」。
+
+    面板上只有一行位置放「上次送入」，年份和秒在这里都是噪音。
     """
-    if n is None or n == "":
-        return "—"
-    try:
-        n = float(n)
-    except (TypeError, ValueError):
-        return "—"
-    for unit in ("B", "KB", "MB", "GB"):
-        if abs(n) < 1024 or unit == "GB":
-            return ("%d B" % n) if unit == "B" else ("%.1f %s" % (n, unit))
-        n /= 1024
-    return "%.1f GB" % n
+    m = re.search(r"(\d{2})-(\d{2})[ T](\d{2}):(\d{2})", str(s or ""))
+    return "%s-%s %s:%s" % m.groups() if m else ""
 
 
 note("module loaded (pid=%d)" % os.getpid())
@@ -216,12 +222,18 @@ note("module loaded (pid=%d)" % os.getpid())
 # 这里都没有 —— 在这上面花力气只会换来各版本表现不一致。
 #
 # 定下来的规矩（改的时候别破坏）：
-#   · 只有一个强调色，只给主按钮和「执行中」。其余一律灰阶。
-#   · 字号只用四级：20 / 17 / 13 / 11。层级靠留白拉开，不靠一路加粗。
-#   · 间距一律 4 的倍数，窗口左右各留 20，上下各留 20。
-#   · 分隔用 1px 细线 + 大留白，不堆边框、不堆卡片底色。
+#   · 只有一个强调色，只给「送入达芬奇」和「已送入 / 执行中」。其余一律灰阶。
+#   · 字号按角色定，一个数字只干一件事：
+#       F_NAME  18  草稿名 —— 这一屏唯一的主角
+#       F_TITLE 16  产品名 —— 比草稿名小一号，用户关心的不是产品叫什么
+#       F_BTN   13  按钮
+#       F_BODY  12  状态说明 / 结果 / 输入框
+#       F_NOTE  11  小节标题 / 副标题 / 页脚
+#   · 间距一律 4 的倍数，窗口左右各留 20。
+#   · 分隔只用 1px 细线，不堆边框、不堆卡片底色。
 #   · 字体用系统中文字体。指定拉丁字体会让中英混排一高一低。
-#   · 一个动作只出现一次。「锁定 / 清理 / 刷新」是工具，压到页脚当小字。
+#   · 一个动作只出现一次。常驻按钮越少越好：页脚只有「诊断」，锁定 / 清理 /
+#     刷新都不在面板上 —— 挤在同一行的次要按钮会把主按钮的份量稀释掉。
 
 
 def _font_family():
@@ -248,6 +260,16 @@ C_ERR = "#FF453A"
 
 GAP = 4                     # 所有间距都是它的倍数
 
+F_NAME = 18                 # 草稿名
+F_TITLE = 16                # 产品名
+F_BTN = 13                  # 按钮
+F_BODY = 12                 # 状态说明 / 结果 / 输入
+F_NOTE = 11                 # 注释
+
+# 输入框里那行灰字。它替面板解释了「为什么现在填不了」，比一句状态说明省地方。
+PH_WAIT = "先送入达芬奇，才能写回"
+PH_READY = "留空＝自动命名「草稿名_调色」"
+
 
 def _qss(body):
     return "font-family:%s;%s" % (FONT, body)
@@ -268,23 +290,30 @@ def _btn_qss(kind, enabled=True):
     """
     if not enabled:
         return _qss("color:%s;background-color:transparent;border:1px solid %s;"
-                    "border-radius:9px;font-size:13px;" % (C_DIM, C_LINE))
+                    "border-radius:9px;font-size:%spx;"
+                    % (C_DIM, C_LINE, F_BTN))
     if kind == "primary":
         return _qss("color:#FFFFFF;background-color:%s;border:0px;"
-                    "border-radius:9px;font-size:13px;font-weight:600;"
-                    "padding:0 16px;" % C_ACCENT)
+                    "border-radius:10px;font-size:%spx;font-weight:600;"
+                    "padding:0 16px;" % (C_ACCENT, F_BTN))
     if kind == "secondary":
         return _qss("color:%s;background-color:%s;border:0px;border-radius:9px;"
-                    "font-size:13px;padding:0 16px;" % (C_TEXT, C_FIELD))
-    # ghost：页脚那三个工具动作，压到最小存在感
+                    "font-size:%spx;padding:0 16px;" % (C_TEXT, C_FIELD, F_BTN))
+    # ghost：页脚那一个「诊断」，压到最小存在感
     return _qss("color:%s;background-color:transparent;border:0px;border-radius:7px;"
-                "font-size:11px;padding:0 8px;" % C_SUB)
+                "font-size:%spx;padding:0 8px;" % (C_SUB, F_NOTE))
 
 
-def _input_qss():
+def _input_qss(enabled=True):
+    """输入框。不能填的时候底色退回面板色、字变暗 —— 不用读说明也知道点不动。"""
+    if not enabled:
+        return _qss("color:%s;background-color:%s;border:1px solid %s;"
+                    "border-radius:8px;padding:0 10px;font-size:%spx;"
+                    % (C_DIM, C_BG, C_LINE, F_BODY))
     return _qss("color:%s;background-color:%s;border:1px solid %s;"
-                "border-radius:8px;padding:0 10px;font-size:12px;"
-                "selection-background-color:%s;" % (C_TEXT, C_FIELD, C_LINE, C_ACCENT))
+                "border-radius:8px;padding:0 10px;font-size:%spx;"
+                "selection-background-color:%s;"
+                % (C_TEXT, C_FIELD, C_LINE, F_BODY, C_ACCENT))
 
 
 class Panel(object):
@@ -297,20 +326,20 @@ class Panel(object):
 
         self.closing = False
         self.job = None          # {"proc","out","label","action","t0","file"}
-        self._lock_state = False
         self._has_draft = False
-        # 缓存那一行的两个数：默认策略能删的、以及要额外一步才删的「可再生
-        # 中间产物」。都来自 status 报的实测值，不是估算 —— 面板显示多少，
-        # 按钮点下去就释放多少。两个都是 0 时按钮直接禁用。
-        self._free_bytes = 0
-        self._free_extra = 0
+        self._draft_name = ""
+        # 能不能写回 / 能不能填新名字。判据只有一个：**这份草稿成功送入过**。
+        # 写回读的是送入那一刻的快照，没送过就没有东西可写回 —— 这时候让按钮
+        # 亮着、点下去再弹一个「还没有完成过一次送入」，是拿报错当提示。
+        self._can_write = False
+        self._sent_name = ""      # 本会话里送入成功的草稿名（status 的兜底）
         # 「草稿打开之后又被编辑过」——来自 status 的两个文件时间，不扫内存。
         # 为真时点「送入」直接弹提示，连子进程都不启动（见 _on_send）。
         self._edited = False
         self._edit_text = ""
         self._open_text = ""
         # 结果弹窗（独立小窗，不是模态）：_dlg 是当前那个窗口对象，
-        # _act 是弹窗上那个动作按钮（重试 / 清理）要执行的调用。
+        # _act 是弹窗上那个动作按钮（重试）要执行的调用。
         self._dlg = None
         self._dlg_seq = 0
         self._act = None
@@ -318,6 +347,9 @@ class Panel(object):
         # 按速度预渲染成等长素材，帧序/时长才和剪映一致。机器上没有 ffmpeg
         # 时 send 会自己退回 slot，并在报告里写明。
         self.speed_mode = "bake"
+        # 自动查询的节拍：上次问的时刻、下次隔多久问。
+        self._last_scan = time.monotonic()
+        self._scan_interval = AUTO_REFRESH
 
         # 后台状态查询（单飞：同时只有一个线程在问剪映）
         self._st = threading.Lock()
@@ -326,7 +358,7 @@ class Panel(object):
         self._st_err = None
         # 单飞查询进行中又有人要刷新：记下来，等这次结果贴完再补一次。
         # 不记的话，任务结束时的刷新会被「刚好还在跑」的旧查询吞掉，
-        # 面板上的缓存/送去状态停在任务前。
+        # 面板上的草稿和送入状态停在任务前。
         self._want_refresh = False
 
         # 兼容性自检：后台线程跑 `cli compat`，结果贴回来再弹窗。
@@ -338,8 +370,7 @@ class Panel(object):
         if not self._build_window():
             return
         self._wire()
-        # 没扫到草稿时，① 和 ② 都不给点：这两个动作的前提就是「剪映里有一份
-        # 打开的草稿」，让它点下去再报闸门失败是浪费一轮往返。
+        # 第一次扫描回来之前，两个按钮都不给点：面板还不知道剪映里有没有草稿。
         self._sync_buttons()
 
         self.refresh_draft()
@@ -392,6 +423,16 @@ class Panel(object):
             return {}
         return {"MinimumSize": [0, h], "MaximumSize": [w, h]}
 
+    def _grow(self, h):
+        """只给下限不给上限：内容长了自己长高，把下面的弹簧顶掉。
+
+        「送入完成 + 两行不送说明」最多三行，钉死 34 会把它剪掉半截 ——
+        而这三行恰恰是用户最需要看的（达芬奇里比剪映少了什么）。
+        """
+        if not getattr(self, "styled", True):
+            return {}
+        return {"MinimumSize": [0, h]}
+
     def _pad(self, w):
         """左右留白。Fusion 的组没有 margin 属性，只能用定宽空标签撑。"""
         props = {"Text": "", "Weight": 0}
@@ -413,62 +454,68 @@ class Panel(object):
         return self.ui.Label(props)
 
     def _header(self):
-        """品牌 + 当前状态。状态点用 ● 上色 —— 比画一个圆角块稳。"""
+        """产品名 + 一句话说明；右上角是状态。
+
+        「ColorPass」比草稿名小一号：用户每次打开面板关心的是「现在哪份草稿」，
+        不是产品叫什么。
+        """
         ui, s = self.ui, self._S
         left = ui.VGroup({"Weight": 1}, [
             ui.Label({"ID": "jybTitle", "Text": "ColorPass", "Weight": 0,
-                      **s(_text_qss(17, C_TEXT, 600))}),
+                      **s(_text_qss(F_TITLE, C_TEXT, 600))}),
             ui.VGap(2),
             ui.Label({"ID": "jybSub", "Text": "剪映 → 达芬奇 · 往返调色",
-                      "Weight": 0, **s(_text_qss(11, C_SUB))}),
+                      "Weight": 0, **s(_text_qss(F_NOTE, C_SUB))}),
         ])
         # 状态做成一个标签（「● 就绪」），不拆点 + 文字两个控件：
         # 拆开就要靠间距对齐，而 Fusion 各版本对 Gap 的支持不一致。
         right = ui.Label({"ID": "jybState", "Text": "● 检测中", "Weight": 0,
-                          **s(_text_qss(11, C_SUB))})
+                          **s(_text_qss(F_BODY, C_SUB))})
         return ui.HGroup({"Weight": 0}, [left, right])
 
     def _draft_block(self):
-        """一块只在说一件事：现在剪映里是哪份草稿、能不能用。"""
+        """这一块只说一件事：剪映里现在是哪份草稿、能不能动手。"""
         ui, s = self.ui, self._S
         props = {"ID": "jybInfo", "Text": "正在读取剪映…", "Weight": 0,
                  "WordWrap": True}
-        props.update(self._box(34))
-        props.update(s(_text_qss(11, C_SUB)))
+        props.update(self._grow(34))
+        props.update(s(_text_qss(F_BODY, C_SUB)))
         return ui.VGroup({"Weight": 0}, [
-            ui.Label({"Text": "当前草稿", "Weight": 0, **s(_text_qss(10, C_DIM))}),
-            ui.VGap(3),
-            ui.Label({"ID": "jybDraft", "Text": "—", "Weight": 0,
-                      **s(_text_qss(20, C_TEXT, 600))}),
+            ui.Label({"ID": "jybCap", "Text": "当前草稿", "Weight": 0,
+                      **s(_text_qss(F_NOTE, C_DIM))}),
             ui.VGap(4),
+            ui.Label({"ID": "jybDraft", "Text": "—", "Weight": 0,
+                      **s(_text_qss(F_NAME, C_TEXT, 600))}),
+            ui.VGap(6),
             ui.Label(props),
         ])
 
     def _action_block(self):
-        """两个动作，一主一次。顺序就是使用顺序，不需要编号解释。"""
+        """唯一的主按钮，整屏只有它是实心的。"""
         ui, s = self.ui, self._S
         send = {"ID": "btnSend", "Text": "送入达芬奇", "Weight": 0}
-        send.update(self._box(38))
+        send.update(self._box(42))
         send.update(s(_btn_qss("primary")))
-        write = {"ID": "btnWrite", "Text": "写回剪映", "Weight": 0}
-        write.update(self._box(34))
-        write.update(s(_btn_qss("secondary")))
-        return ui.VGroup({"Weight": 0}, [ui.Button(send), ui.VGap(8),
-                                         ui.Button(write)])
+        return ui.VGroup({"Weight": 0}, [ui.Button(send)])
 
-    def _result_line(self):
-        props = {"ID": "jybResult", "Text": "", "Weight": 0, "WordWrap": True}
-        props.update(self._box(34))
-        props.update(self._S(_text_qss(11, C_SUB)))
-        return self.ui.Label(props)
+    def _write_block(self):
+        """写回：名字和按钮是一件事，所以放在同一个块里，中间不插别的。
 
-    def _name_block(self):
-        """新草稿名。放在动作下面 —— 它只在「写回」那一步用得上。"""
+        名字只在写回时用得上，放到别处就等于让用户先填一个还不知道干吗用的
+        输入框。输入框平时是灰的（没送入过就没有可写回的调色），占位文字
+        会说清楚还差哪一步。
+        """
         ui, s = self.ui, self._S
+        label = {"Text": "新草稿名", "Weight": 0,
+                 **s(_text_qss(F_BODY, C_DIM))}
+        write = {"ID": "btnWrite", "Text": "写回剪映", "Weight": 0}
+        write.update(self._box(36))
+        write.update(s(_btn_qss("secondary")))
         return ui.VGroup({"Weight": 0}, [
-            ui.Label({"Text": "新草稿名", "Weight": 0, **s(_text_qss(10, C_DIM))}),
-            ui.VGap(4),
-            self._name_input(),
+            ui.HGroup({"Weight": 0}, [ui.Label(label), self._pad(10),
+                                      self._name_input()]),
+            ui.VGap(8),
+            ui.Button(write),
         ])
 
     def _name_input(self):
@@ -477,10 +524,10 @@ class Panel(object):
         写回仍可用，只是走自动命名；面板本身必须能开。
         """
         ui = self.ui
-        props = {"ID": "txtName", "Text": "",
-                 "PlaceholderText": "留空＝按「草稿名_调色」自动命名"}
-        props.update(self._box(30))
-        props.update(self._S(_input_qss()))
+        props = {"ID": "txtName", "Text": "", "Weight": 1,
+                 "PlaceholderText": PH_WAIT}
+        props.update(self._box(32))
+        props.update(self._S(_input_qss(enabled=False)))
         try:
             return ui.LineEdit(props)
         except Exception as exc:
@@ -488,55 +535,52 @@ class Panel(object):
             try:
                 return ui.Label({"Text": "本版本面板不支持输入，"
                                          "用命令行 write --name 指定",
-                                 "Weight": 0, **self._S(_text_qss(11, C_DIM))})
+                                 "Weight": 1, **self._S(_text_qss(F_NOTE, C_DIM))})
             except Exception:
                 return self._spacer(0)
 
+    def _result_line(self):
+        props = {"ID": "jybResult", "Text": "", "Weight": 0, "WordWrap": True}
+        props.update(self._grow(34))
+        props.update(self._S(_text_qss(F_BODY, C_SUB)))
+        return self.ui.Label(props)
+
     def _footer(self):
-        """工具动作。都不改变主流程，所以只给 11px 的灰字，不给按钮外观。"""
+        """页脚只剩「诊断」。它不是流程的一部分，所以最小号、最右边。"""
         ui, s = self.ui, self._S
-
-        def ghost(wid, text):
-            props = {"ID": wid, "Text": text, "Weight": 0}
-            props.update(self._box(24))
-            props.update(s(_btn_qss("ghost")))
-            return ui.Button(props)
-
-        # 左状态、右动作 —— 一眼分得清「信息」和「能点的东西」。
-        cache = {"ID": "jybCache", "Text": "可清理 —", "Weight": 1}
-        cache.update(s(_text_qss(11, C_DIM)))
-        return ui.HGroup({"Weight": 0}, [
-            ui.Label(cache),
-            ghost("btnDiag", "诊断"),
-            ghost("btnLock", "锁定轨道"),
-            ghost("btnGc", "清理"),
-            ghost("btnRefresh", "刷新"),
-        ])
+        props = {"ID": "btnDiag", "Text": "诊断", "Weight": 0}
+        props.update(self._box(22))
+        props.update(s(_btn_qss("ghost")))
+        return ui.HGroup({"Weight": 0}, [self._spacer(1), ui.Button(props)])
 
     def _body(self):
         """竖排内容 + 左右各 20 的留白。
 
-        窗口是固定的 460×470；多余的高度由中间那个空 Label 吃掉，所以窗口
+        节奏：标题 →24 草稿 →18 主按钮 →20 │分隔│ 18 写回 →14 结果
+        →弹簧→ │分隔│ 页脚。两个分隔线把「送进去」和「写回来」切成两段，
+        剩下的靠留白，不靠卡片。
+
+        窗口是固定的 460×448；多余的高度由中间那个空 Label 吃掉，所以窗口
         被拉高时只有中间变空，标题贴着顶、页脚贴着底 —— 不会散架。
         """
         ui = self.ui
         inner = ui.VGroup({"Weight": 1}, [
             self._header(),
-            ui.VGap(GAP * 5),
+            ui.VGap(24),
             self._draft_block(),
-            ui.VGap(GAP * 4),
+            ui.VGap(18),
             self._action_block(),
-            ui.VGap(GAP),
-            self._result_line(),
-            ui.VGap(GAP * 3),
+            ui.VGap(20),
             self._rule(),
-            ui.VGap(GAP * 3),
-            self._name_block(),
+            ui.VGap(18),
+            self._write_block(),
+            ui.VGap(14),
+            self._result_line(),
             self._spacer(),
             self._rule(),
-            ui.VGap(GAP * 2),
+            ui.VGap(8),
             self._footer(),
-            ui.VGap(GAP * 5),
+            ui.VGap(16),
         ])
         return [ui.HGroup({"Weight": 1},
                           [self._pad(20), inner, self._pad(20)])]
@@ -596,11 +640,6 @@ class Panel(object):
         hook("btnSend", lambda _ev: self._on_send())
         hook("btnWrite", lambda _ev: self.start_job(
             "write", "写回剪映", extra=self._write_extra()))
-        hook("btnLock", lambda _ev: self.start_job(
-            "lock", "切换轨道锁", extra=["off"] if self._lock_state else ["on"]))
-        hook("btnRefresh", lambda _ev: self.refresh_draft())
-        hook("btnGc", lambda _ev: self.start_job(
-            "gc", "清理缓存", extra=self._gc_extra()))
         hook("btnDiag", lambda _ev: self._on_diag())
 
     # ---------- 界面小工具 ----------
@@ -623,7 +662,7 @@ class Panel(object):
             self.items["jybState"].Text = "● " + word
         except Exception:
             pass
-        self._paint("jybState", _text_qss(11, color))
+        self._paint("jybState", _text_qss(F_BODY, color))
 
     def say_r(self, text):
         try:
@@ -642,7 +681,8 @@ class Panel(object):
             pass
         color = {"accent": C_ACCENT, "ok": C_TEXT,
                  "err": C_ERR}.get(tone, C_SUB)
-        self._paint("jybResult", _text_qss(11, color, 600 if tone == "accent" else 0))
+        self._paint("jybResult",
+                    _text_qss(F_BODY, color, 600 if tone == "accent" else 0))
 
     def _new_name(self):
         """面板上填的新草稿名；没有输入框或留空就返回空串（走自动命名）。
@@ -667,8 +707,7 @@ class Panel(object):
     # ---------- 按钮可用性 ----------
     # 每个按钮的「身份」，禁用时按它重新上一套样式。用 :disabled 伪状态不保险：
     # Fusion 的元素不一定是 QPushButton 类，类型选择器可能根本不命中。
-    KINDS = {"btnSend": "primary", "btnWrite": "secondary",
-             "btnLock": "ghost", "btnGc": "ghost", "btnRefresh": "ghost"}
+    KINDS = {"btnSend": "primary", "btnWrite": "secondary"}
 
     def _set_enabled(self, wid, on):
         try:
@@ -678,6 +717,14 @@ class Panel(object):
         kind = self.KINDS.get(wid)
         if kind:
             self._paint(wid, _btn_qss(kind, bool(on)))
+        elif wid == "txtName":
+            # 输入框不能填时，除了变色还要换占位文字 —— 用户第一眼看到的是
+            # 那句灰字，它得回答「为什么填不了」，而不是「这里能填」。
+            self._paint(wid, _input_qss(bool(on)))
+            try:
+                self.items[wid].PlaceholderText = PH_READY if on else PH_WAIT
+            except Exception:
+                pass
 
     def _on_send(self):
         """点「送入」时先过一道本地闸门。
@@ -695,7 +742,7 @@ class Panel(object):
         self._go_send()
 
     def _go_send(self):
-        self.start_job("send", "① 送入达芬奇", extra=["--speed", self.speed_mode])
+        self.start_job("send", "送入达芬奇", extra=["--speed", self.speed_mode])
 
     def _stale_body(self):
         """「打开后又被编辑过」的说明。三步处理必须给全 —— 只说不能送，
@@ -710,40 +757,25 @@ class Panel(object):
                 "处理：\n"
                 "1  回到剪映首页（把这份草稿关掉）\n"
                 "2  再双击重新打开它\n"
-                "3  再点一次「① 送入达芬奇」\n\n"
+                "3  再点一次「送入达芬奇」\n\n"
                 "只按 Ctrl+S 不够 —— 保存只是写盘，剪映不会因此重读内存。" % when)
 
-    def _gc_extra(self):
-        """清理按钮这次该带什么参数。
-
-        默认策略还有东西可收就按默认收。若默认已是 0 项、面板上却写着
-        「可再生 X」，就一次带到 --intermediate —— 用户看着这个数字按的
-        按钮，再弹一层窗问他「要不要清可再生的」是多余的一步。
-        runs（报告 + 底稿快照）不在 --intermediate 范围内，怎么按都动不到。
-        """
-        if self._free_bytes <= 0 and self._free_extra > 0:
-            return ["--apply", "--intermediate"]
-        return ["--apply"]
-
     def _sync_buttons(self):
-        """按「有没有草稿 / 有没有任务在跑 / 有没有东西可清」决定按钮能不能点。
+        """两个按钮、一个输入框，各由一条规则决定能不能动：
 
-        规则：
-        · 没有扫到草稿时 ① 和 ② 一律禁用 —— 它们的共同前提就是「剪映里有
-          一份打开的草稿」，让用户点下去再吃闸门报错是白跑一趟。
-        · 缓存确实一项都收不掉时，「清理缓存」也禁用。面板已经把数字报成
-          0 了，再让它能点只会换来一次「点了没反应」。
+        · 剪映里有没有认得出的草稿 —— 没有就「送入」灰掉；
+        · 这份草稿成功送入过没有 —— 没有就「写回」和输入框都灰掉；
+          写回读的是送入那一刻的快照，没送过就是没有东西可写回；
+        · 有没有任务在跑 —— 跑着全灰。
         """
         busy = self.job is not None
-        can_free = (self._free_bytes + self._free_extra) > 0
         self._set_enabled("btnSend", self._has_draft and not busy)
-        self._set_enabled("btnWrite", self._has_draft and not busy)
-        self._set_enabled("btnRefresh", not busy)
-        self._set_enabled("btnLock", not busy)
-        self._set_enabled("btnGc", not busy and can_free)
+        self._set_enabled("btnWrite", self._can_write and not busy)
+        self._set_enabled("txtName", self._can_write and not busy)
 
     # ---------- 状态（后台线程，绝不阻塞 StepLoop） ----------
     def _status_worker(self):
+        t0 = time.monotonic()
         rep, err = {}, None
         if _no_backend():
             err = _NO_PRODUCT
@@ -764,13 +796,22 @@ class Panel(object):
             self._st_result = rep
             self._st_err = err
             self._st_running = False
+        # 这次问了多久，决定下次隔多久再问。慢机器（剪映内存读不出来要等
+        # 超时）不该被 10 秒一次的轮询追着跑。
+        spent = time.monotonic() - t0
+        self._scan_interval = (AUTO_REFRESH if spent <= SLOW_SCAN
+                               else AUTO_REFRESH_SLOW)
 
     def refresh_draft(self):
-        """触发一次后台状态查询（面板上的 ↻ 刷新也走这里）。
+        """触发一次后台状态查询。
+
+        没有人手动点它了：面板开窗时、每个任务结束时、以及空闲时的定时轮询
+        （maybe_refresh）都会走到这里。
 
         已有查询在跑时不并发起第二个，但会记一个「待刷新」—— 否则任务结束时
-        这次刷新就丢了，面板一直显示任务前的缓存数字和上次送入时间。
+        这次刷新就丢了，面板会一直显示任务前的草稿和送入状态。
         """
+        self._last_scan = time.monotonic()
         with self._st:
             if self._st_running:
                 self._want_refresh = True
@@ -778,7 +819,6 @@ class Panel(object):
             self._st_running = True
             self._st_result = None
             self._st_err = None
-        self._set_enabled("btnRefresh", False)
         try:
             t = threading.Thread(target=self._status_worker, daemon=True)
             t.start()
@@ -787,6 +827,23 @@ class Panel(object):
             with self._st:
                 self._st_running = False
             self._sync_buttons()
+
+    def maybe_refresh(self):
+        """没有「刷新」按钮之后，面板自己看当前草稿。
+
+        为什么不能干脆不刷：剪映里换了草稿，面板还挂着上一份的名字，用户会
+        照着旧名字点「送入」。为什么不是每秒刷：每次 status 都是一整个子进程
+        （源码模式约 1 秒），一直追等于后台常驻一个 CPU 核。所以空闲时 10 秒
+        一次，单次查询超过 2.5 秒的机器退到 30 秒。
+
+        任务在跑、或者上一次查询还没回来时不发起新的 —— 那两次的结果必然
+        被覆盖，白起一个进程。
+        """
+        if self.job is not None or self._st_running or self._diag_running:
+            return
+        if time.monotonic() - self._last_scan < self._scan_interval:
+            return
+        self.refresh_draft()
 
     def apply_status(self):
         """主循环里把后台结果贴到界面上（没有新结果就什么都不做）。"""
@@ -806,35 +863,6 @@ class Panel(object):
         if again:
             self.refresh_draft()
 
-    def _cache_line(self, rep):
-        """缓存行文案：只报「真能删掉的量」，不报目录总占用。
-
-        这里踩过坑。原来显示的是整个 %LOCALAPPDATA%\\ColorPass 的大小，而里面
-        大头是**按设计就不能删**的东西：runs 里写回要用的底稿快照、当前草稿
-        的 cube、最近几份草稿的痕迹。于是面板写着「缓存 253 MB」，点清理却
-        0 项、数字纹丝不动，用户只能认定按钮坏了。现在显示的每一笔都是按钮
-        点下去真会消失的量，删不掉的干脆不提。
-
-        两笔分开报：
-          可清理       默认策略（剪映里已删的 / 超 30 天 / 每池留 5 份）会收的
-          可再生       变速预渲染与 cube 工作副本，清掉下次送入自动重生成，
-                       要额外走一次 --intermediate，所以单独标出来
-        """
-        free = rep.get("cache_free_bytes")
-        extra = rep.get("cache_extra_bytes")
-        if free is None and extra is None:
-            self._free_bytes = self._free_extra = 0
-            return "可清理 —"
-        free, extra = int(free or 0), int(extra or 0)
-        self._free_bytes, self._free_extra = free, extra
-        if not free and not extra:
-            return "无可清理项"
-        if not free:
-            return "可清理 %s（可再生）" % human_bytes(extra)
-        if not extra:
-            return "可清理 %s" % human_bytes(free)
-        return "可清理 %s · 可再生 %s" % (human_bytes(free), human_bytes(extra))
-
     def _apply(self, rep, err):
         if not rep:
             # 配置类错误（找不到源码目录）要原样显示 —— 它本身就是修复步骤，
@@ -845,12 +873,10 @@ class Panel(object):
                 self.say_r("读取草稿状态失败（详见 %s）" % LOG)
             if err:
                 note("status failed: %s" % err)
-            self._has_draft = False
-            self._free_bytes = self._free_extra = 0
+            self._has_draft = self._can_write = False
             self._edited = False
             try:
                 self.items["jybDraft"].Text = "—"
-                self.items["jybCache"].Text = "可清理 —"
             except Exception:
                 pass
             self.set_state("状态未知", C_ERR)
@@ -862,16 +888,19 @@ class Panel(object):
         # 「扫到草稿」= 剪映进程里认出了当前工程。没打开（没有新鲜 .locked）
         # 也算扫到 —— 这种情况要让人看见名字，再用下面的提示催他重新打开。
         self._has_draft = bool(name)
+        self._draft_name = name
         self._edited = bool(rep.get("draft_edited"))
         self._edit_text = rep.get("draft_edit_text") or ""
         self._open_text = rep.get("draft_opened_text") or ""
+        last = rep.get("last_send") or {}
+        # 能不能写回 = 这份草稿成功送入过。两个来源取或：snapshot 指针是权威
+        # （跨会话有效），本会话送成功过的也认（指针文件读不出来时不至于卡住）。
+        committed = (bool(last.get("committed"))
+                     and (last.get("draft") or "") == name)
+        self._can_write = bool(name) and (committed or self._sent_name == name)
         try:
             # 草稿名单独一行，前面不加「当前草稿：」—— 上面那行小字已经是标签了。
-            self.items["jybDraft"].Text = name or "—"
-        except Exception:
-            pass
-        try:
-            self.items["jybCache"].Text = self._cache_line(rep)
+            self.items["jybDraft"].Text = elide(name, 26) or "—"
         except Exception:
             pass
         # 状态词只占一行位置，所以只挑「现在该干什么」说，不复述草稿名。
@@ -880,28 +909,28 @@ class Panel(object):
             msg = "剪映没在运行。先启动剪映，打开要处理的草稿。"
         elif not name:
             word, tone = "待识别", C_WARN
-            msg = "剪映在运行，但没认出当前草稿。在剪映里打开一份草稿，再点右下角「刷新」。"
+            msg = "剪映在运行，但没认出当前草稿。在剪映里打开一份草稿，面板会自己跟上。"
         elif not opened:
             word, tone = "待打开", C_WARN
             msg = "没检测到打开状态（可能已回到首页）。重新打开这份草稿再送入。"
         elif self._edited:
             word, tone = "待重开", C_WARN
-            msg = ("打开之后又被编辑过（%s）。关掉重开一次再送入 ——"
-                   "只按 Ctrl+S 不够，剪映不会因此重读内存。" % (self._edit_text or "时间未知"))
+            msg = ("打开后又改过（%s）。关掉重开一次再送入；只按 Ctrl+S 不够。"
+                   % (self._edit_text or "时间未知"))
+            if self._can_write:
+                msg += "\n写回不受影响，用的是上次送入那版。"
+        elif self._can_write:
+            word, tone = "已送入", C_ACCENT
+            at = short_stamp(last.get("at"))
+            msg = "已送入达芬奇%s。调完色就能写回。" % (
+                ("（%s）" % at) if at else "")
         else:
             word, tone = "就绪", C_OK
             msg = "已打开，可以送入。"
         self.set_state(word, tone)
-
-        last = rep.get("last_send") or {}
-        if last:
-            state = "已提交" if last.get("committed") else "未走完"
-            msg += ("\n上次送入：%s · %s · %s 段 · %s"
-                    % (last.get("draft") or "?", last.get("at") or "?",
-                       last.get("segments") or 0, state))
         self.say_r(msg)
-        note("status: draft=%s alive=%s opened=%s last=%s"
-             % (name or "-", alive, opened, last.get("at")))
+        note("status: draft=%s alive=%s opened=%s writable=%s"
+             % (name or "-", alive, opened, self._can_write))
 
     # ---------- 兼容性自检 ----------
     def _on_diag(self):
@@ -1025,8 +1054,7 @@ class Panel(object):
             return
         self.job = {"proc": proc, "out": out, "label": label,
                     "action": action, "file": f, "t0": time.time(),
-                    "extra": list(extra or []),
-                    "next_lock": (not self._lock_state) if action == "lock" else None}
+                    "extra": list(extra or [])}
         self.say_result("%s · 执行中…" % label, tone="accent")
         self.set_state("执行中", C_ACCENT)
         self._sync_buttons()
@@ -1059,20 +1087,16 @@ class Panel(object):
         ok = (code == 0) and bool(rep.get("ok", True))
         self.job = None
         note("job end %s code=%s ok=%s" % (j["action"], code, ok))
-        # 只有真的切成功才翻本地镜像。原来无条件翻：锁定失败后按
-        # 「已锁定」发下一次，用户得点两下才解锁，而且面板显示的是反的。
-        if ok and j["action"] == "lock" and j.get("next_lock") is not None:
-            self._lock_state = j["next_lock"]
         if ok:
             msg = self._summary(j["action"], rep)
             notes = self._notes(txt)
             if notes:
                 msg += "\n" + "\n".join(notes)
             self.say_result(msg, tone="ok")
-            if j["action"] == "gc" and not rep.get("count"):
-                # 默认策略没东西可收时，给一条「那就清可再生的」的出路，
-                # 否则用户只会看到「0 项」，以为按钮坏了。
-                self._popup_gc_empty(rep)
+            # 送入成功 → 这份草稿马上就可以写回，不用等下一次 status 回来。
+            if j["action"] == "send":
+                self._sent_name = self._draft_name
+                self._can_write = bool(self._draft_name)
         else:
             self.say_result("%s · 没有完成（详见弹窗）" % j["label"], tone="err")
             self._popup_fail(j, rep, txt, code)
@@ -1146,28 +1170,6 @@ class Panel(object):
             if rep.get("alignment_ok") is False:
                 msg += "\n注意：对齐校验未通过，建议在剪映里抽查"
             return msg
-        if action == "lock":
-            if str(rep.get("state")) == "on":
-                return "轨道已锁定：%d 条（调色不受影响）" % (rep.get("locked") or 0)
-            return "轨道已解锁：现在可以改剪辑，改完要重新送入"
-        if action == "gc":
-            n = rep.get("count") or 0
-            if not n:
-                # 别只说「0 项」：用户看不出这个词的意思是「确实没东西可清」
-                # 还是「按钮坏了」。说清楚还剩多少在正常使用。
-                kept = rep.get("kept_bytes") or rep.get("before_bytes")
-                msg = "没有可回收的缓存（%s 是写回要用的快照和当前草稿）" % human_bytes(kept)
-                alt = rep.get("intermediate_bytes") or 0
-                if alt:
-                    msg += "\n可再生中间产物还能清 %s" % human_bytes(alt)
-                return msg
-            msg = "缓存清理完成：%d 项，释放 %s" % (n, human_bytes(rep.get("freed_bytes")))
-            kept = rep.get("kept_bytes")
-            if kept:
-                msg += "，剩 %s 仍在使用" % human_bytes(kept)
-            if rep.get("intermediate"):
-                msg += "\n（只清了变速预渲染与 cube 工作副本，报告和快照保留）"
-            return msg
         return "完成"
 
     @staticmethod
@@ -1218,7 +1220,7 @@ class Panel(object):
                     "处理：\n"
                     "1  回到剪映首页，把这份草稿关掉\n"
                     "2  再双击重新打开它\n"
-                    "3  重开后尽快点一次「① 送入达芬奇」，再按下面的「重试」\n\n"
+                    "3  重开后尽快点一次「送入达芬奇」，再按下面的「重试」\n\n"
                     "成功送一次之后工具会存一份本地副本；只要这份草稿的磁盘内容"
                     "没再变，以后放多久都能直接送。")
         if err:
@@ -1316,8 +1318,7 @@ class Panel(object):
         return True
 
     def _popup_fail(self, j, rep, txt, code):
-        titles = {"send": "送入失败", "write": "写回失败",
-                  "lock": "锁定失败", "gc": "清理失败"}
+        titles = {"send": "送入失败", "write": "写回失败"}
         title = titles.get(j["action"], "操作失败")
         body = self._fail_text(j["action"], rep, txt, code)
         action, label, extra = j["action"], j["label"], j.get("extra") or []
@@ -1327,34 +1328,6 @@ class Panel(object):
             # 弹窗建不出来也不能什么都不说
             self.say_result("%s · 失败：%s"
                             % (j["label"], body.splitlines()[0][:80]), tone="err")
-
-    def _popup_gc_empty(self, rep):
-        """缓存清理没东西可收 —— 说明为什么，并给「清可再生的」这条出路。
-
-        正常情况下走不到这里：面板上写着 0 时按钮已经禁用，写着「可再生 X」
-        时按钮直接带 --intermediate。只剩一种情形 —— 面板上的数字过期了
-        （比如刚自动回收过），点下去才发现已经没得清。
-        """
-        size = human_bytes(rep.get("kept_bytes") or rep.get("before_bytes"))
-        alt = rep.get("intermediate_bytes") or 0
-        body = ("%s\n\n普通清理只收「剪映里已经删掉的草稿 / 超过 30 天 / "
-                "每个池只留最近 5 份」的缓存。剩下这 %s 全是还在用的："
-                "写回要用的底稿快照、当前草稿的 cube、最近几份草稿的痕迹，"
-                "所以一项都没动。"
-                % (rep.get("note") or "没有可回收的缓存。", size))
-        if alt:
-            body += ("\n\n要现在就腾空间，可以清掉「可再生中间产物」：\n"
-                     "· 变速段预渲染的 .mov（retime\\<草稿ID>\\）\n"
-                     "· 写回时导出的 cube 工作副本（luts\\<草稿ID>\\）\n"
-                     "约 %s。报告和底稿快照一律保留（写回还要用），"
-                     "这些文件下次送入时会自动重新生成，变速段会多渲染一次。"
-                     % human_bytes(alt))
-            self._popup("缓存没有可回收项", body, act_label="清理可再生缓存",
-                        act=lambda: self.start_job(
-                            "gc", "清理可再生缓存",
-                            extra=["--apply", "--intermediate"]))
-        else:
-            self._popup("缓存没有可回收项", body)
 
     # ---------- 主循环 ----------
     def loop(self):
@@ -1385,6 +1358,7 @@ class Panel(object):
                 self.apply_status()
                 self.poll_job()
                 self.poll_diag()
+                self.maybe_refresh()
             except Exception:
                 note("step error:\n" + traceback.format_exc())
                 self.say_r("处理出错，详见 %s" % LOG)

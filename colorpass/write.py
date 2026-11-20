@@ -322,7 +322,7 @@ def run(new_name=None, auto_pull=True):
     ptr = snapshot.current()
     if ptr is None:
         rep["error"] = ("还没有完成过一次「送入达芬奇」。顺序是："
-                        "① 送入达芬奇 → 在达芬奇里调色 → ② 写回剪映。")
+                        "送入达芬奇 → 在达芬奇里调色 → 写回剪映。")
         return rep
     if ptr.get("_incomplete"):
         rep["error"] = ("最近一次「送入达芬奇」没有走完（%s 开始，时间线只摆了"

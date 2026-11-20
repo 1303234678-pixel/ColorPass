@@ -236,6 +236,12 @@ def make_panel(path=None, payload=None):
 STATUS_OK = {"draft": "测试草稿", "jianying": {"processes": [1]}, "opened": True,
              "last_send": None}
 
+# 送入过一次之后的 status：last_send 指的就是当前这份草稿。
+SENT_OK = dict(STATUS_OK, last_send={
+    "draft": "测试草稿", "at": "2026-11-19 23:47:41",
+    "timeline": "CP · 测试草稿", "segments": 13, "committed": True})
+
+
 
 class PanelSlimTest(unittest.TestCase):
     # ---- 装在哪、用哪个解释器（开源后不能再写死绝对路径） ----
@@ -272,47 +278,26 @@ class PanelSlimTest(unittest.TestCase):
         self.assertNotIn("PB_SRC", ns)
         self.assertNotIn("DRX", ns)
 
+    # ---- 面板只剩「送入 / 写回 / 诊断」 ----
     def test_buttons_wired(self):
         ns, p = make_panel(payload=STATUS_OK)
         on = p.win.On
-        for b in ("btnSend", "btnWrite", "btnLock", "btnRefresh", "btnGc",
-                  "btnDiag"):
+        for b in ("btnSend", "btnWrite", "btnDiag"):
             self.assertTrue(callable(getattr(getattr(on, b), "Clicked", None)),
                             "%s 没有接上回调" % b)
 
-    # ---- 缓存显示与回收 ----
-    def test_cache_label_shows_only_deletable(self):
-        """行上报的必须是「点下去真会释放」的量，不是目录总占用。
+    def test_only_three_actions_on_panel(self):
+        """锁定轨道、清理缓存、刷新、缓存行都不该再出现在面板上。
 
-        旧版显示整个缓存目录大小（这里是 253 MB），而其中大头是写回要用的
-        底稿快照和当前草稿的 cube —— 按设计删不得。用户点清理 0 项、数字
-        不变，就会认定按钮坏了。
+        挤在同一行的次要按钮会把主按钮的份量稀释掉 —— 这一屏只留「送入」
+        「写回」，其余是命令行能力（colorpass lock / gc）。
         """
-        payload = dict(STATUS_OK, cache_bytes=265329868,
-                       cache_free_bytes=12900000, cache_extra_bytes=0)
-        ns, p = make_panel(payload=payload)
-        p.apply_status()
-        line = p.items["jybCache"].Text
-        self.assertIn("12.3 MB", line)
-        self.assertNotIn("253.0 MB", line, "总占用不能出现，那是幻觉")
-        self.assertTrue(p.items["btnGc"].Enabled)
-
-    def test_cache_label_separates_regenerable(self):
-        payload = dict(STATUS_OK, cache_bytes=265329868,
-                       cache_free_bytes=12900000, cache_extra_bytes=44000000)
-        ns, p = make_panel(payload=payload)
-        p.apply_status()
-        line = p.items["jybCache"].Text
-        self.assertIn("12.3 MB", line)
-        self.assertIn("可再生", line)
-        self.assertIn("42.0 MB", line)
-
-    def test_cache_label_without_value(self):
-        ns, p = make_panel(payload=dict(STATUS_OK, cache_bytes=None,
-                                        cache_free_bytes=None,
-                                        cache_extra_bytes=None))
-        p.apply_status()
-        self.assertEqual(p.items["jybCache"].Text, "可清理 —")
+        ns, p = make_panel(payload=STATUS_OK)
+        for wid in ("btnLock", "btnGc", "btnRefresh", "jybCache"):
+            self.assertNotIn(wid, p.items, "%s 应该已经从面板上删掉" % wid)
+        # 「新草稿名」和「写回剪映」必须是挨着的两个控件，中间不隔别的东西
+        self.assertIn("txtName", p.items)
+        self.assertIn("btnWrite", p.items)
 
     # ---- 草稿被改过：送入前弹提示 ----
     def test_send_blocked_when_draft_edited(self):
@@ -354,76 +339,102 @@ class PanelSlimTest(unittest.TestCase):
         self.assertEqual(got, ["send"])
         self.assertIsNone(p._dlg)
 
-    def test_gc_disabled_when_nothing_deletable(self):
-        payload = dict(STATUS_OK, cache_bytes=85917562,
-                       cache_free_bytes=0, cache_extra_bytes=0)
-        ns, p = make_panel(payload=payload)
-        p.apply_status()
-        self.assertEqual(p.items["jybCache"].Text, "无可清理项")
-        self.assertFalse(p.items["btnGc"].Enabled,
-                         "写着 0 还让点，就是又一次「点了没反应」")
-
-    def test_gc_button_cleans_with_apply(self):
-        payload = dict(STATUS_OK, cache_bytes=100, cache_free_bytes=2048,
-                       cache_extra_bytes=0)
-        ns, p = make_panel(payload=payload)
-        p.apply_status()
-        got = []
-        p.start_job = lambda action, label, extra=None: got.append((action, extra))
-        p.win.On.btnGc.Clicked(None)
-        self.assertEqual(got, [("gc", ["--apply"])])
-
-    def test_gc_button_goes_straight_to_intermediate(self):
-        """只剩可再生中间产物时一步到位，别再弹一层窗问一遍。"""
-        payload = dict(STATUS_OK, cache_bytes=85917562,
-                       cache_free_bytes=0, cache_extra_bytes=44000000)
-        ns, p = make_panel(payload=payload)
-        p.apply_status()
-        self.assertIn("可再生", p.items["jybCache"].Text)
-        self.assertTrue(p.items["btnGc"].Enabled)
-        got = []
-        p.start_job = lambda action, label, extra=None: got.append((action, extra))
-        p.win.On.btnGc.Clicked(None)
-        self.assertEqual(got, [("gc", ["--apply", "--intermediate"])])
-
-    def test_human_bytes(self):
-        hb = load_panel()["human_bytes"]
-        self.assertEqual(hb(0), "0 B")
-        self.assertEqual(hb(2048), "2.0 KB")
-        self.assertEqual(hb(5 * 1024 * 1024), "5.0 MB")
-        self.assertEqual(hb(None), "—")
-
-    # ---- 草稿显示 / 刷新 / 禁用 ----
+    # ---- 草稿显示 / 可用性 ----
     def test_draft_label_shows_current_draft(self):
         """草稿名单独一行大字。上面那行小字已经是「当前草稿」这个标签了。"""
         ns, p = make_panel(payload=STATUS_OK)
         p.apply_status()
         self.assertEqual(p.items["jybDraft"].Text, "测试草稿")
 
-    def test_send_and_write_disabled_without_draft(self):
+    def test_everything_disabled_without_draft(self):
         ns, p = make_panel(payload={"draft": None, "jianying": {"processes": [1]},
                                     "opened": False})
         p.apply_status()
         self.assertFalse(p.items["btnSend"].Enabled)
         self.assertFalse(p.items["btnWrite"].Enabled)
-        self.assertTrue(p.items["btnRefresh"].Enabled)
+        self.assertFalse(p.items["txtName"].Enabled)
         self.assertEqual(p.items["jybDraft"].Text, "—")
 
-    def test_send_and_write_enabled_with_draft(self):
+    def test_write_locked_before_first_send(self):
+        """有草稿、但还没送入过：能送，不能写回，也不能填名字。
+
+        写回读的是「送入那一刻的快照」。没送过就没有东西可写回，这时候让
+        按钮亮着，点下去只能弹一句「还没有完成过一次送入」—— 拿报错当提示。
+        """
         ns, p = make_panel(payload=STATUS_OK)
         p.apply_status()
         self.assertTrue(p.items["btnSend"].Enabled)
+        self.assertFalse(p.items["btnWrite"].Enabled)
+        self.assertFalse(p.items["txtName"].Enabled)
+        self.assertIn("先送入", p.items["txtName"].PlaceholderText)
+
+    def test_write_unlocked_after_send(self):
+        ns, p = make_panel(payload=SENT_OK)
+        p.apply_status()
         self.assertTrue(p.items["btnWrite"].Enabled)
+        self.assertTrue(p.items["txtName"].Enabled)
+        self.assertEqual(p.items["jybState"].Text, "● 已送入")
+        self.assertIn("自动命名", p.items["txtName"].PlaceholderText)
+
+    def test_write_locked_when_last_send_is_another_draft(self):
+        """上次送入的是别的草稿 —— 那份快照跟眼前这份没关系，不能写回。"""
+        payload = dict(STATUS_OK, last_send={
+            "draft": "上一份草稿", "at": "2026-11-19 20:00:00",
+            "segments": 8, "committed": True})
+        ns, p = make_panel(payload=payload)
+        p.apply_status()
+        self.assertFalse(p.items["btnWrite"].Enabled)
+        self.assertFalse(p.items["txtName"].Enabled)
+
+    def test_write_locked_when_send_not_committed(self):
+        """送入没走完（快照不完整）就不算数 —— 写回会把残缺的剪辑带回去。"""
+        payload = dict(STATUS_OK, last_send={
+            "draft": "测试草稿", "at": "2026-11-19 23:00:00",
+            "segments": 5, "committed": False})
+        ns, p = make_panel(payload=payload)
+        p.apply_status()
+        self.assertFalse(p.items["btnWrite"].Enabled)
+
+    def test_send_success_unlocks_write_without_waiting_for_status(self):
+        """送入成功的瞬间就解锁写回，不等下一次 status 回来。"""
+        ns, p = make_panel(payload=STATUS_OK)
+        p.apply_status()
+        self.assertFalse(p.items["btnWrite"].Enabled)
+        p.job = self._job(ns, "send", 0, '{"ok": true, "placed": 13}')
+        p.poll_job()
+        self.assertTrue(p.items["btnWrite"].Enabled)
+        self.assertTrue(p.items["txtName"].Enabled)
 
     def test_disabled_before_first_scan(self):
         """构造完、还没拿到状态之前不能让按钮亮着。"""
         ns, p = make_panel(payload=STATUS_OK)
         p.items["btnSend"].Enabled = True          # 故意打乱
         p._has_draft = False
+        p._can_write = False
         p._sync_buttons()
         self.assertFalse(p.items["btnSend"].Enabled)
+        self.assertFalse(p.items["btnWrite"].Enabled)
 
-    def test_refresh_rescans(self):
+    def test_buttons_disabled_while_job_running(self):
+        ns, p = make_panel(payload=SENT_OK)
+        p.apply_status()
+        p.job = {"proc": _Proc(0), "out": "", "label": "x", "action": "send",
+                 "file": None, "t0": 0}
+        p._sync_buttons()
+        self.assertFalse(p.items["btnSend"].Enabled)
+        self.assertFalse(p.items["btnWrite"].Enabled)
+        self.assertFalse(p.items["txtName"].Enabled)
+        p.job = None
+        p._sync_buttons()
+        self.assertTrue(p.items["btnSend"].Enabled)
+        self.assertTrue(p.items["btnWrite"].Enabled)
+
+    # ---- 自动刷新（面板上没有「刷新」按钮了） ----
+    def test_refresh_rescans_on_its_own(self):
+        """空闲时面板自己看一眼当前草稿，10 秒一次。
+
+        剪映里换了草稿、面板还挂着上一份的名字，用户就会照着旧名字点送入。
+        """
         sub = _Sub(STATUS_OK)
         calls = []
         orig = sub.run
@@ -439,26 +450,58 @@ class PanelSlimTest(unittest.TestCase):
         Panel.loop = lambda self: None
         p = Panel()                      # 构造时扫一次
         self.assertEqual(len(calls), 1)
-        p.win.On.btnRefresh.Clicked(None)
-        self.assertEqual(len(calls), 2, "点刷新必须真的重新扫一次")
+        p.maybe_refresh()
+        self.assertEqual(len(calls), 1, "刚扫过，不该马上再扫")
+        p._last_scan -= 60               # 假装十秒过去了
+        p.maybe_refresh()
+        self.assertEqual(len(calls), 2, "到点了必须真的重新扫")
 
-    def test_buttons_disabled_while_job_running(self):
-        ns, p = make_panel(payload=STATUS_OK)
-        p.apply_status()
+    def test_refresh_skipped_while_busy(self):
+        """任务在跑时不轮询 —— 那一次结果必然被覆盖，白起一个进程。"""
+        sub = _Sub(STATUS_OK)
+        calls = []
+        orig = sub.run
+
+        def counted(*a, **kw):
+            calls.append(1)
+            return orig(*a, **kw)
+
+        sub.run = counted
+        ns = load_panel(payload=STATUS_OK)
+        ns["subprocess"] = sub
+        Panel = ns["Panel"]
+        Panel.loop = lambda self: None
+        p = Panel()
         p.job = {"proc": _Proc(0), "out": "", "label": "x", "action": "send",
-                 "file": None, "t0": 0, "next_lock": None}
-        p._sync_buttons()
-        self.assertFalse(p.items["btnSend"].Enabled)
-        self.assertFalse(p.items["btnRefresh"].Enabled)
-        p.job = None
-        p._sync_buttons()
-        self.assertTrue(p.items["btnSend"].Enabled)
+                 "file": None, "t0": 0}
+        p._last_scan -= 60
+        p.maybe_refresh()
+        self.assertEqual(len(calls), 1)
+
+    def test_slow_scan_backs_off(self):
+        """一次查询超过 2.5 秒的机器，轮询间隔退到 30 秒。
+
+        剪映内存读不出来时 status 会一直等到超时；这台机器再被 10 秒一次的
+        轮询追着，等于永远有一个子进程在跑。
+        """
+        import time as _t
+        ns, p = make_panel(payload=STATUS_OK)
+        self.assertEqual(p._scan_interval, ns["AUTO_REFRESH"])
+
+        def slow(*a, **kw):
+            _t.sleep(ns["SLOW_SCAN"] + 0.05)
+            return _RunResult(json.dumps(STATUS_OK, ensure_ascii=False))
+
+        ns["subprocess"].run = slow
+        p._status_worker()
+        self.assertEqual(p._scan_interval, ns["AUTO_REFRESH_SLOW"])
 
     def test_refresh_mid_scan_keeps_single_flight(self):
         ns, p = make_panel(payload=STATUS_OK)
         p._st_running = True
         p.refresh_draft()                      # 不许起第二个
         self.assertTrue(p._st_running)
+        self.assertTrue(p._want_refresh, "被拒的刷新要记下来")
 
     def test_name_field_reads_items_without_get(self):
         """Fusion 的 items 没有 .get，旧写法读不到名字。"""
@@ -476,23 +519,31 @@ class PanelSlimTest(unittest.TestCase):
         p.win.On.btnSend.Clicked(None)
         self.assertEqual(got, [("send", ["--speed", "bake"])])
 
-    def test_lock_toggles(self):
-        ns, p = make_panel(payload=STATUS_OK)
-        got = []
-        p.start_job = lambda action, label, extra=None: got.append((action, extra))
-        p.win.On.btnLock.Clicked(None)
-        self.assertEqual(got[-1], ("lock", ["on"]))
-        p._lock_state = True
-        p.win.On.btnLock.Clicked(None)
-        self.assertEqual(got[-1], ("lock", ["off"]))
-
     def test_write_passes_name(self):
-        ns, p = make_panel(payload=STATUS_OK)
+        ns, p = make_panel(payload=SENT_OK)
+        p.apply_status()
         p.items["txtName"].Text = "我的片子"
         got = []
         p.start_job = lambda action, label, extra=None: got.append((action, extra))
         p.win.On.btnWrite.Clicked(None)
         self.assertEqual(got, [("write", ["--name", "我的片子"])])
+
+    def test_long_draft_name_is_elided(self):
+        """面板只给草稿名一行。长名字截断加省略号 —— 剪到半个字更像坏了。"""
+        long_name = "很长的草稿名" * 5
+        ns, p = make_panel(payload=dict(STATUS_OK, draft=long_name))
+        p.apply_status()
+        shown = p.items["jybDraft"].Text
+        self.assertTrue(shown.endswith("…"))
+        self.assertLessEqual(len(shown), 26)
+        # 显示可以截，逻辑用的名字必须是全的
+        self.assertEqual(p._draft_name, long_name)
+
+    def test_short_stamp(self):
+        ss = load_panel()["short_stamp"]
+        self.assertEqual(ss("2026-11-19 23:47:41"), "11-19 23:47")
+        self.assertEqual(ss(""), "")
+        self.assertEqual(ss(None), "")
 
     def test_apply_status_ready(self):
         ns, p = make_panel(payload=STATUS_OK)
@@ -501,11 +552,19 @@ class PanelSlimTest(unittest.TestCase):
         self.assertIn("可以送入", p.items["jybInfo"].Text)
         self.assertIn("测试草稿", p.items["jybDraft"].Text)
 
+    def test_apply_status_sent(self):
+        ns, p = make_panel(payload=SENT_OK)
+        p.apply_status()
+        self.assertEqual(p.items["jybState"].Text, "● 已送入")
+        self.assertIn("11-19 23:47", p.items["jybInfo"].Text)
+        self.assertIn("写回", p.items["jybInfo"].Text)
+
     def test_apply_status_not_running(self):
         ns, p = make_panel(payload={"draft": None, "jianying": {"processes": []},
                                     "opened": False})
         p.apply_status()
         self.assertIn("剪映没在运行", p.items["jybInfo"].Text)
+        self.assertEqual(p.items["jybState"].Text, "● 未运行")
 
     def test_apply_status_timeout_is_not_fatal(self):
         def boom(*a, **kw):
@@ -513,6 +572,7 @@ class PanelSlimTest(unittest.TestCase):
         ns, p = make_panel(payload=boom)
         p.apply_status()                      # 不许抛
         self.assertIn("读取草稿状态失败", p.items["jybInfo"].Text)
+        self.assertFalse(p.items["btnWrite"].Enabled)
 
     def test_apply_status_without_result_is_noop(self):
         ns, p = make_panel(payload=STATUS_OK)
@@ -614,7 +674,7 @@ class PanelSlimTest(unittest.TestCase):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(stdout)
         return {"proc": _Proc(code), "out": path, "label": "测试任务",
-                "action": action, "file": None, "t0": 0, "extra": [], "next_lock": None}
+                "action": action, "file": None, "t0": 0, "extra": []}
 
     def test_job_success_shows_one_line_and_no_popup(self):
         ns, p = make_panel(payload=STATUS_OK)
@@ -682,60 +742,20 @@ class PanelSlimTest(unittest.TestCase):
         状态一回来就把那段整段改写 —— 用户看到的是「点了没反应」。
         """
         ns, p = make_panel(payload=STATUS_OK)
-        p.job = self._job(ns, "gc", 0, '{"ok": true, "count": 2, "freed_bytes": 4096}')
+        p.job = self._job(ns, "write", 0,
+                          '{"ok": true, "draft_name": "新片_调色", "luts": 13}')
         p.poll_job()
         shown = p.items["jybResult"].Text
-        self.assertIn("释放 4.0 KB", shown)
+        self.assertIn("新片_调色", shown)
         p.apply_status()                      # 状态刷新回来
         self.assertEqual(p.items["jybResult"].Text, shown, "结果行不该被状态覆盖")
         self.assertIn("测试草稿", p.items["jybDraft"].Text)
-
-    def test_gc_empty_explains_and_offers_deep_clean(self):
-        ns, p = make_panel(payload=STATUS_OK)
-        p.job = self._job(ns, "gc", 0, json.dumps({
-            "ok": True, "count": 0, "applied": True,
-            "before_bytes": 85917562, "freed_bytes": 0,
-            "intermediate_bytes": 44000000, "intermediate_count": 2,
-            "note": "没有可自动回收的缓存：81.9 MB 都属于当前草稿或最近 5 份仍在剪映里的草稿",
-        }, ensure_ascii=False))
-        p.poll_job()
-        self.assertIn("没有可回收的缓存", p.items["jybResult"].Text)
-        self.assertIsNotNone(p._dlg, "没东西可清时也要说清楚，不能静默")
-        body = p._dlg.GetItems()["dMsg"].Text
-        self.assertIn("可再生", body)
-        got = []
-        p.start_job = lambda action, label, extra=None: got.append((action, extra))
-        p._run_act()
-        self.assertEqual(got, [("gc", ["--apply", "--intermediate"])])
-
-    # ---- 状态同步的两个边角 ----
-    def test_lock_state_not_flipped_on_failure(self):
-        """锁定失败不能把本地镜像翻成「已锁定」。
-
-        旧版在算 ok 之前无条件翻：失败一次之后，下一次按「已锁定」发 on，
-        用户得点两下才解锁，面板显示的也是反的。
-        """
-        ns, p = make_panel(payload=STATUS_OK)
-        self.assertFalse(p._lock_state)
-        job = self._job(ns, "lock", 1, '{"ok": false, "gate": "no_timeline"}')
-        job["next_lock"] = True
-        p.job = job
-        p.poll_job()
-        self.assertFalse(p._lock_state)
-
-    def test_lock_state_flipped_on_success(self):
-        ns, p = make_panel(payload=STATUS_OK)
-        job = self._job(ns, "lock", 0, '{"ok": true, "state": "on", "locked": 3}')
-        job["next_lock"] = True
-        p.job = job
-        p.poll_job()
-        self.assertTrue(p._lock_state)
 
     def test_refresh_requested_while_busy_is_queued(self):
         """查询在跑时来的刷新不能丢。
 
         任务结束时 poll_job 会 refresh_draft()；如果那一刻恰好有一次旧查询
-        在跑，旧版直接 return —— 面板永远停在任务前的缓存数字和上次送入时间。
+        在跑，旧版直接 return —— 面板会永远停在任务前的草稿和送入状态。
         """
         ns, p = make_panel(payload=STATUS_OK)
         with p._st:
@@ -749,15 +769,6 @@ class PanelSlimTest(unittest.TestCase):
         p.apply_status()
         self.assertFalse(p._want_refresh)
         self.assertIn("补刷的草稿", p.items["jybDraft"].Text)
-
-    def test_gc_empty_without_intermediate_has_no_action(self):
-        ns, p = make_panel(payload=STATUS_OK)
-        p.job = self._job(ns, "gc", 0, json.dumps(
-            {"ok": True, "count": 0, "before_bytes": 1024, "freed_bytes": 0},
-            ensure_ascii=False))
-        p.poll_job()
-        self.assertFalse(p._dlg.GetItems()["dAct"].Enabled,
-                         "没有可清的中间产物时不该给一个空按钮")
 
     # ---- 建窗降级 ----
     def test_falls_back_to_plain_when_styles_rejected(self):
@@ -791,6 +802,7 @@ class PanelSlimTest(unittest.TestCase):
         p = Panel()
         self.assertIsNotNone(p.win)
         self.assertEqual(p.win.definition["ID"], "jybWin_c")
+
     # ---- 兼容性自检 ----
     def test_diag_shows_copyable_report(self):
         """「诊断」把自检结果摊在一个可全选复制的框里。
@@ -811,7 +823,6 @@ class PanelSlimTest(unittest.TestCase):
         p._diag_running = True
         p.win.On.btnDiag.Clicked(None)
         self.assertEqual(p._diag_text, "", "正在跑就别再起一个")
-
 
 
 if __name__ == "__main__":

@@ -145,7 +145,7 @@ def run(draft_id=None):
     ptr = snapshot.current()
     if ptr is None:
         rep["error"] = ("还没有完成过一次「送入达芬奇」。正常流程是："
-                        "① 送入达芬奇 → 在达芬奇里调色 → ② 写回剪映。")
+                        "送入达芬奇 → 在达芬奇里调色 → 写回剪映。")
         return rep
     if ptr.get("_incomplete"):
         rep["error"] = ("最近一次「送入达芬奇」没有走完（%s 开始，时间线可能只摆了"
@@ -194,7 +194,7 @@ def run(draft_id=None):
     tl = warm_timeline(proj)
     if tl is None:
         # 写回会自动走这里：用户可能还没送入，或者达芬奇停在一个空工程上。
-        rep["error"] = ("达芬奇里没有当前时间线。请先点「① 送入达芬奇」把剪映"
+        rep["error"] = ("达芬奇里没有当前时间线。请先点「送入达芬奇」把剪映"
                         "的剪辑送进去，再到面板里写回。")
         draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
         return rep
