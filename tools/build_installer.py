@@ -34,7 +34,7 @@ def _run(args):
     subprocess.run([str(a) for a in args], check=True, cwd=str(ROOT))
 
 
-def _version_file(path, desc):
+def _version_file(path, desc, original="ColorPass.exe"):
     """Windows 文件属性里显示的那一栏 —— 右键 exe 能看到版本，测试者报问题方便。"""
     nums = (__version__.split(".") + ["0", "0", "0"])[:4]
     v = tuple(int(n) if n.isdigit() else 0 for n in nums)
@@ -48,13 +48,13 @@ def _version_file(path, desc):
         StringStruct('FileDescription', '%(desc)s'),
         StringStruct('FileVersion', '%(ver)s'),
         StringStruct('InternalName', 'ColorPass'),
-        StringStruct('OriginalFilename', 'ColorPass.exe'),
+        StringStruct('OriginalFilename', '%(orig)s'),
         StringStruct('ProductName', 'ColorPass'),
         StringStruct('ProductVersion', '%(ver)s')])]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])])
   ]
 )
-""" % {"v": v, "ver": __version__, "desc": desc},
+""" % {"v": v, "ver": __version__, "desc": desc, "orig": original},
         encoding="utf-8")
     return path
 
@@ -103,7 +103,8 @@ def build_runtime(with_ffmpeg=False):
 def build_setup(with_ffmpeg=False):
     BUILD.mkdir(exist_ok=True)
     name = "ColorPass-Setup-%s" % __version__
-    vf = _version_file(BUILD / "version_setup.txt", "ColorPass 安装程序")
+    vf = _version_file(BUILD / "version_setup.txt", "ColorPass 安装程序",
+                       original=name + ".exe")
     _run([sys.executable, "-m", "PyInstaller",
           "--noconfirm", "--clean", "--onefile", "--console",
           "--name", name,
