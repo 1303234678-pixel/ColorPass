@@ -508,6 +508,8 @@ def _print(rep):
             "speed_mode", "speed_segments", "speed_note", "kinds",
             "features", "issues", "orphan", "luts", "bake_failed",
             "snapshot_at", "snapshot_sha", "drift_note", "sent_timeline",
+            "coverage", "coverage_segments", "coverage_note", "multicam_groups",
+            "multicam", "coverage_capable", "exports",
             "cleared", "will_use", "scope", "files", "freed_bytes", "tracks",
             "before_bytes", "after_bytes", "base", "free_bytes", "kept_bytes",
             "pending_at", "live_note", "live_error", "freshness",
@@ -536,6 +538,9 @@ def cmd_compat(a):
     没有会怎样**。测试同学只要贴这一段就够定位版本问题。
     """
     from . import compat
+    if getattr(a, "matrix", False):
+        print(compat.matrix_text())
+        return 0
     rep = compat.report()
     if getattr(a, "json", False):
         print(json.dumps(rep, ensure_ascii=False, indent=1, default=str))
@@ -543,6 +548,19 @@ def cmd_compat(a):
         print(compat.text_report())
     # 缺致命能力才算失败；「没开达芬奇」不算 —— 那是环境状态，不是不兼容。
     return 0 if rep.get("ok") or rep.get("state") == "unknown" else 5
+
+
+def cmd_multicam(a):
+    """多机位 / 合并片段自检：写回前先看它认不认，不必真写一遍。"""
+    from . import multicam
+    rep = multicam.run(export=getattr(a, "export", False))
+    if getattr(a, "json", False):
+        print(json.dumps(rep, ensure_ascii=False, indent=1, default=str))
+    else:
+        print(multicam.text(rep))
+    if rep.get("error"):
+        return 5
+    return 0
 
 
 def main(argv=None):
@@ -636,7 +654,16 @@ def main(argv=None):
     sp = sub.add_parser("compat",
                         help="兼容性自检：这版达芬奇缺哪几个 API、各自影响什么（只读）")
     sp.add_argument("--json", action="store_true", help="输出 JSON（默认是人读的多行文本）")
+    sp.add_argument("--matrix", action="store_true",
+                    help="打印 18/19/20/21 四版能力对照表（不连达芬奇）")
     sp.set_defaults(fn=cmd_compat)
+
+    sp = sub.add_parser("multicam",
+                        help="多机位 / 合并片段自检：识别、与送入计划匹配、能否导出 LUT")
+    sp.add_argument("--export", action="store_true",
+                    help="真的对多机位片段导一次 LUT（只写数据目录，不碰剪映/调色）")
+    sp.add_argument("--json", action="store_true", help="输出 JSON")
+    sp.set_defaults(fn=cmd_multicam)
 
     a = p.parse_args(argv)
     if not getattr(a, "fn", None):

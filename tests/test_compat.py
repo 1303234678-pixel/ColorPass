@@ -59,32 +59,51 @@ def _resolve_app(version, product="DaVinci Resolve Studio", methods=None,
     return app
 
 
-# --- 四个版本的 API 面 -------------------------------------------------
+# --- 四个大版本的 API 面 -------------------------------------------------
 #
-# 每条都只写「这版有的」，缺的就不写 —— 与真机一致。
+# 18.0 / 19.0 / 20.0 / 21.1 —— 用户要求「18、19、20、21 都能用」。
+# 每条只写「这版有的」，缺的就不写 —— 与真机一致。
+#
+# 依据官方脚本 API 增量（不是猜版本号）：
+#   · 链路必需的那批方法 18.0 起就齐全，19/20 没有删改
+#   · 20.2 增加 TimelineItem.SetName
+#   · 21.1 增加 MediaPool.CreateMulticamClip、TimelineItem.GetType /
+#     FlattenMulticam / GetSpeed / SetSpeed
+# 17.4 留作「比承诺更老也只会降级、不会崩」的对照。
 
-V17 = dict(
-    app={},                       # 17 没有 GetCurrentPage / OpenPage
-    mp=dict(ImportMedia=_fn(1), CreateEmptyTimeline=_fn(1),
-            AppendToTimeline=_fn(1)),
-    tl=dict(AddMarker=_fn(5), SetTrackLock=_fn(3), GetIsTrackLocked=_fn(2),
-            SetStartTimecode=_fn(1), GetName=_fn(0)),
-    item=dict(GetName=_fn(0), ExportLUT=_fn(2), AddMarker=_fn(5)),
+def _surface(**over):
+    """以 18.0 的 API 面为底，按版本往上加方法。"""
+    base = {
+        "app": dict(GetCurrentPage=_fn(0), OpenPage=_fn(1)),
+        "mp": dict(ImportMedia=_fn(1), CreateEmptyTimeline=_fn(1),
+                   AppendToTimeline=_fn(1), GetRootFolder=_fn(0)),
+        "tl": dict(AddMarker=_fn(6), SetTrackLock=_fn(3),
+                   GetIsTrackLocked=_fn(2), SetStartTimecode=_fn(1),
+                   CreateCompoundClip=_fn(2), GetName=_fn(0),
+                   DeleteTimelines=_fn(1), AddTrack=_fn(1), GetMarkers=_fn(0)),
+        "item": dict(GetName=_fn(0), ExportLUT=_fn(2), AddMarker=_fn(6),
+                     SetClipEnabled=_fn(1), GetClipEnabled=_fn(0),
+                     GetMarkers=_fn(0), GetMediaPoolItem=_fn(0)),
+    }
+    for k, extra in (over or {}).items():
+        base[k] = dict(base[k], **extra)
+    return base
+
+
+V17 = _surface()
+V17["app"] = {}                   # 17 没有 GetCurrentPage / OpenPage
+V17["tl"] = dict(V17["tl"], AddMarker=_fn(5))     # 17 只有 5 参数
+V17["item"] = {k: v for k, v in V17["item"].items()
+               if k not in ("SetClipEnabled", "GetClipEnabled")}
+
+V18 = _surface()
+V19 = _surface()
+V20 = _surface(item=dict(SetName=_fn(1)))          # 20.2
+V21 = _surface(
+    mp=dict(CreateMulticamClip=_fn(2)),
+    item=dict(SetName=_fn(1), GetType=_fn(0), FlattenMulticam=_fn(1),
+              SetSpeed=_fn(1), GetSpeed=_fn(0)),
 )
-
-V18 = dict(
-    app=dict(GetCurrentPage=_fn(0), OpenPage=_fn(1)),
-    mp=dict(ImportMedia=_fn(1), CreateEmptyTimeline=_fn(1),
-            AppendToTimeline=_fn(1)),
-    tl=dict(AddMarker=_fn(6), SetTrackLock=_fn(3), GetIsTrackLocked=_fn(2),
-            SetStartTimecode=_fn(1), CreateCompoundClip=_fn(2),
-            GetName=_fn(0), DeleteTimelines=_fn(1)),
-    item=dict(GetName=_fn(0), ExportLUT=_fn(2), AddMarker=_fn(6),
-              SetClipEnabled=_fn(1), GetClipEnabled=_fn(0)),
-)
-
-V20 = dict(V18)
-V20 = dict(app=V18["app"], mp=V18["mp"], tl=V18["tl"], item=V18["item"])
 
 
 def make(surface, version="20.3.1.0007", **kw):
@@ -122,13 +141,23 @@ class CallShrinkTest(unittest.TestCase):
 
 
 class LutTypeTest(unittest.TestCase):
-    def test_falls_back_to_literal(self):
-        """老版本脚本模块没有 EXPORT_LUT_33PTCUBE 这个属性。"""
-        self.assertEqual(compat.lut_type(types.SimpleNamespace()), "33PTCube")
+    def test_defaults_to_33_point_enum(self):
+        """Python 绑定里取不到 EXPORT_LUT_33PTCUBE：回退必须是整数 2。
+
+        实测 20.3：传字符串 "33PTCube" → ExportLUT 返回 False 且不建文件；
+        传 2 → 导出 33³ cube。这个默认值错了，整条写回会挂。
+        """
+        self.assertEqual(compat.lut_type(types.SimpleNamespace()), 2)
+        self.assertEqual(compat.lut_type(), 2)
 
     def test_prefers_new_constant(self):
         mod = types.SimpleNamespace(EXPORT_LUT_33PTCUBE="33PTCube_v2")
         self.assertEqual(compat.lut_type(mod), "33PTCube_v2")
+
+    def test_prefers_app_constant(self):
+        app = types.SimpleNamespace(EXPORT_LUT_33PTCUBE=3)
+        mod = types.SimpleNamespace(EXPORT_LUT_33PTCUBE=2)
+        self.assertEqual(compat.lut_type(mod=mod, app=app), 3)
 
 
 class EnsurePageTest(unittest.TestCase):
@@ -198,6 +227,119 @@ class VersionTest(unittest.TestCase):
                          (18, 6, 6))
         self.assertEqual(compat.parse_version("18.1"), (18, 1, 0))
         self.assertEqual(compat.parse_version(""), ())
+
+
+class FourVersionTest(unittest.TestCase):
+    """18 / 19 / 20 / 21 都必须判「接口齐全」，不能因为少个增强项就报降级。"""
+
+    def test_all_four_are_ok(self):
+        cases = ((V18, "18.6.6"), (V19, "19.1.2"),
+                 (V20, "20.3.1.0007"), (V21, "21.1.0.14"))
+        for surface, ver in cases:
+            rep = compat.report(app=make(surface, version=ver))
+            self.assertEqual(rep["state"], "ok", (ver, rep["missing"]))
+            self.assertTrue(rep["ok"], ver)
+
+    def test_18_lacks_multicam_but_does_not_degrade(self):
+        rep = compat.report(app=make(V18, version="18.6.6"))
+        self.assertEqual(rep["features"]["multicam_create"]["state"], "missing")
+        self.assertIn("multicam_create", rep["optional_missing"])
+        self.assertNotIn("multicam_create", rep["missing"])
+        self.assertIn("增强", compat.text_report(app=make(V18, version="18.6.6")))
+
+    def test_21_1_reports_multicam_and_speed(self):
+        rep = compat.report(app=make(V21, version="21.1.0.14"))
+        for key in ("multicam_create", "multicam_flatten", "item_type",
+                    "clip_speed", "clip_rename"):
+            self.assertEqual(rep["features"][key]["state"], "ok", key)
+        self.assertEqual(rep["state"], "ok", rep["missing"])
+
+
+class ImportMediaTest(unittest.TestCase):
+    """21.1 把路径数组标成 deprecated，18–20 又只认它 —— 两种都得走通。"""
+
+    def test_old_style_mp(self):
+        seen = []
+
+        def import_media(paths):
+            seen.append(paths)
+            if any(isinstance(p, dict) for p in paths):
+                raise TypeError("只认路径")
+            return ["clip"]
+        mp = Obj(ImportMedia=lambda self, paths: import_media(paths))
+        got, mode = compat.import_media(mp, ["/a.mov"])
+        self.assertEqual(got, ["clip"])
+        self.assertEqual(mode, "paths")
+        self.assertEqual(seen, [["/a.mov"]])
+
+    def test_new_style_mp(self):
+        seen = []
+
+        def import_media(paths):
+            seen.append(paths)
+            if any(isinstance(p, str) for p in paths):
+                raise TypeError("只要 clipInfo")
+            return ["clip"]
+        mp = Obj(ImportMedia=lambda self, p: import_media(p))
+        got, mode = compat.import_media(mp, ["/a.mov"])
+        self.assertEqual(got, ["clip"])
+        self.assertEqual(mode, "clipinfo")
+        self.assertEqual(seen[-1], [{"FilePath": "/a.mov"}])
+
+    def test_empty_list_is_noop(self):
+        self.assertEqual(compat.import_media(Obj(), []), ([], "none"))
+
+
+class MulticamDetectTest(unittest.TestCase):
+    """没有 IsMulticamClip：只能靠媒体池类型 / 原生类型 / 角度命名推断。"""
+
+    class _MI(object):
+        def __init__(self, ctype):
+            self.ctype = ctype
+
+        def GetClipProperty(self, key):
+            return self.ctype if key == "Type" else ""
+
+    class _It(object):
+        def __init__(self, name="clip", ctype="", native=None):
+            self.name, self.ctype, self.native = name, ctype, native
+
+        def GetName(self):
+            return self.name
+
+        def GetMediaPoolItem(self):
+            return MulticamDetectTest._MI(self.ctype) if self.ctype else None
+
+        def GetType(self):
+            if self.native is None:
+                raise AttributeError("21.1 才有")
+            return self.native
+
+    def test_media_pool_type(self):
+        ok, why = compat.is_multicam(self._It(ctype="Multicam"))
+        self.assertTrue(ok)
+        self.assertIn("Multicam", why)
+
+    def test_angle_name(self):
+        ok, why = compat.is_multicam(self._It(name="主机位 - Angle 2"))
+        self.assertTrue(ok)
+        self.assertIn("Angle", why)
+
+    def test_native_type(self):
+        ok, why = compat.is_multicam(self._It(native="multicam"))
+        self.assertTrue(ok)
+        self.assertIn("multicam", why)
+
+    def test_normal_clip(self):
+        ok, why = compat.is_multicam(self._It(name="A001_C003"))
+        self.assertFalse(ok)
+        self.assertEqual(why, "")
+
+    def test_kind_never_raises(self):
+        k = compat.item_kind(self._It(name="x", ctype="Multicam"))
+        self.assertTrue(k["multicam"])
+        self.assertEqual(k["media_type"], "Multicam")
+        self.assertEqual(k["type"], "")
 
 
 class TextReportTest(unittest.TestCase):

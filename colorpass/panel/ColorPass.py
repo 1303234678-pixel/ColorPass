@@ -1169,6 +1169,9 @@ class Panel(object):
                 msg += "\n原样保留：" + " · ".join(bits)
             if rep.get("alignment_ok") is False:
                 msg += "\n注意：对齐校验未通过，建议在剪映里抽查"
+            if rep.get("coverage_segments"):
+                msg += ("\n多机位/合并片段：%d 段共用同一份调色"
+                        % rep["coverage_segments"])
             return msg
         return "完成"
 

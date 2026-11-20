@@ -463,7 +463,9 @@ def place_compound(mp, tl, c, idx, base, draft_id="", bake=False):
                 fail = "复合片段内部变速段预渲染失败：%s" % d.get("why")
                 break
             if _key(out) not in idx:
-                for im in (mp.ImportMedia([out]) or []):
+                # 21.1 把「路径数组」标成 deprecated，18–20 又只认它。
+                # compat.import_media 负责两种形态，这里只认结果。
+                for im in compat.import_media(mp, [out])[0]:
                     p2 = im.GetClipProperty("File Path") or ""
                     if p2:
                         idx[_key(p2)] = im
@@ -809,7 +811,7 @@ def run(tag=paths.TIMELINE_TAG, allow_stale=False, speed_mode="slot"):
             need |= {p["path"] for p in c["inner"]}
     missing = [p for p in need if _key(p) not in idx]
     if missing:
-        for it in (mp.ImportMedia(missing) or []):
+        for it in compat.import_media(mp, missing)[0]:
             p = it.GetClipProperty("File Path") or ""
             if p:
                 idx[_key(p)] = it

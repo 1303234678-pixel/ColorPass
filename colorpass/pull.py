@@ -8,6 +8,7 @@
 """
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -84,18 +85,55 @@ def is_disabled(it):
         return False
 
 
+def _chain(want, lane, start, end):
+    """从 start 到 end 正好由计划里的连续段拼起来，返回这些段；否则 None。
+
+    多机位/复合片段在时间线上是**一个** item，覆盖原本的好几段。只能靠
+    「起点对齐 + 终点对齐 + 中间无缝」来认，不能靠名字（用户会改名）。
+    """
+    segs, cur = [], start
+    guard = 0
+    while cur < end:
+        s = want.get((lane, cur))
+        if s is None or (s.get("dur") or 0) <= 0:
+            return None
+        segs.append(s)
+        cur += s["dur"]
+        guard += 1
+        if guard > 10000:          # 防御：坏计划里 dur=0 会死循环
+            return None
+    return segs if cur == end else None
+
+
 def verify_alignment(tl, plan, base):
+    """核对时间线是否还是送入时那一条。返回 (issues, placed)。
+
+    两遍匹配：
+      1. 有身份标记（段号）的，按标记 + 位置严格核对 —— 这是主路径。
+      2. 没标记的，只在「完全覆盖一段或连续几段」时接受，并记为 coverage。
+         单段且不像多机位的仍然拒绝：那更可能是用户新插入的片段，给它挂
+         LUT 就是挂错画面。
+
+    为什么要有第 2 遍：在达芬奇里把几段合成为多机位/复合片段之后，原来的
+    marker 随旧 item 一起没了。老逻辑会判「没有身份标记」并整条拒绝导出，
+    用户看到的是「写回失败」，却不知道只是因为他做了多机位。位置仍然逐帧
+    对得上，所以可以用「完全覆盖」当第二身份 —— 但必须是**完全**覆盖，
+    差一帧都不认。
+    """
     issues, placed = [], {}
     want = {(s["lane"], s["rec"]): s for s in plan["segments"]}
+
     for lane in range(1, (tl.GetTrackCount("video") or 0) + 1):
-        for it in sorted((tl.GetItemListInTrack("video", lane) or []),
-                         key=lambda x: x.GetStart()):
+        items = sorted((tl.GetItemListInTrack("video", lane) or []),
+                       key=lambda x: x.GetStart())
+        loose = []
+        # ---- 第一遍：有段号的
+        for it in items:
             sid = seg_marker(it)
             st = it.GetStart() - base
             dur = it.GetDuration()
             if not sid:
-                issues.append({"lane": lane, "start": st,
-                               "why": "片段上没有身份标记（可能是新插入的片段）"})
+                loose.append(it)
                 continue
             if sid.endswith(PAD):
                 main_id = sid[:-len(PAD)]
@@ -106,7 +144,7 @@ def verify_alignment(tl, plan, base):
                                    "why": "尾巴段找不到对应主段"})
                 else:
                     placed[target]["items"].append(
-                        {"start": st, "dur": dur, "kind": "pad"})
+                        {"start": st, "dur": dur, "kind": "pad", "obj": it})
                     placed[target]["total"] += dur
                 continue
             s = want.get((lane, st))
@@ -116,8 +154,47 @@ def verify_alignment(tl, plan, base):
                 continue
             ent = placed.setdefault((lane, st), {"segment_id": sid,
                                                  "items": [], "total": 0})
-            ent["items"].append({"start": st, "dur": dur, "kind": "main"})
+            ent["items"].append({"start": st, "dur": dur, "kind": "main",
+                                 "obj": it})
             ent["total"] += dur
+
+        # ---- 第二遍：没段号的，看它是不是完整盖住了连续几段
+        for it in loose:
+            st = it.GetStart() - base
+            dur = it.GetDuration()
+            end = st + dur
+            segs = _chain(want, lane, st, end)
+            kind = compat.item_kind(it)
+            if segs is None:
+                issues.append({"lane": lane, "start": st,
+                               "why": "片段上没有身份标记，位置也对不上"
+                                      "计划里的段"})
+                continue
+            if len(segs) == 1 and not kind["multicam"]:
+                # 单段又不像多机位：多半是新插入的片段。保持严格。
+                issues.append({"lane": lane, "start": st,
+                               "why": "片段上没有身份标记（可能是新插入的片段）"})
+                continue
+            hit = [k for k in ((lane, s["rec"]) for s in segs) if k in placed]
+            if hit:
+                issues.append({"lane": lane, "start": st,
+                               "why": "%d 段合并后的片段与已识别的片段重叠"
+                                      % len(segs)})
+                continue
+            cov = {"lane": lane, "start": st, "dur": dur,
+                   "count": len(segs),
+                   "segments": [s["segment_id"] for s in segs],
+                   "multicam": kind["multicam"], "evidence": kind["why"],
+                   "type": kind["type"], "name": it.GetName()}
+            for s in segs:
+                placed[(lane, s["rec"])] = {
+                    "segment_id": s["segment_id"],
+                    "items": [{"start": st, "dur": dur, "kind": "coverage",
+                               "obj": it, "shared": True}],
+                    "total": s["dur"],
+                    "coverage": cov,
+                }
+
     for (lane, rec), s in sorted(want.items()):
         got = placed.get((lane, rec))
         if got is None:
@@ -131,6 +208,42 @@ def verify_alignment(tl, plan, base):
         issues.append({"why": "当前时间线不是计划里的那条",
                        "want": plan["timeline"], "got": tl.GetName()})
     return issues, placed
+
+
+def coverage_groups(placed):
+    """从 placed 里提取「一个片段盖住多段」的组（去重，按 lane/start 排序）。
+
+    不另开返回值：placed 的键是 (lane, rec)，混进别的类型会让
+    `sorted(placed.items())` 直接 TypeError。调用方按需提取即可。
+    """
+    seen, out = set(), []
+    for key, ent in placed.items():
+        cov = ent.get("coverage") if isinstance(ent, dict) else None
+        if not cov:
+            continue
+        ident = (cov["lane"], cov["start"])
+        if ident in seen:
+            continue
+        seen.add(ident)
+        out.append(cov)
+    return sorted(out, key=lambda c: (c["lane"], c["start"]))
+
+
+def measure_cube(path):
+    """读一份导出的 cube，给出「调没调过」的判断依据；不完整返回 None。"""
+    size, data = load_cube(path)
+    if size != 33 or len(data) != 33 ** 3:
+        return None
+    devs = []
+    for v in (0, 16, 128, 235, 255):
+        gi = int(round(v / 255.0 * 32))
+        o = at(data, 33, gi, gi, gi)
+        exp = gi / 32.0
+        devs += [abs(o[0] - exp) * 255, abs(o[1] - exp) * 255,
+                 abs(o[2] - exp) * 255]
+    corner = at(data, 33, 32, 32, 32)
+    return {"size": size, "n": len(data), "dev_max": round(max(devs), 2),
+            "white_rgb": [round(x * 255, 1) for x in corner]}
 
 
 def run(draft_id=None):
@@ -220,29 +333,43 @@ def run(draft_id=None):
         draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
         return rep
 
+    page_ok = False
     try:
-        compat.ensure_page("color")
-        time.sleep(0.8)
+        # 调色页首次打开要几秒。OpenPage 返回 True 只代表请求被接受，页面没
+        # 真正就绪时 ExportLUT 会返回 False —— 看起来像「这版不能导 LUT」。
+        page_ok = compat.ensure_page("color", wait=10.0)
+        time.sleep(0.5)
     except Exception:
         pass
+    rep["color_page"] = page_ok
 
-    # LUT 导出类型：新版脚本模块给常量，老版只认字面量 "33PTCube"。
-    lut = compat.lut_type()
+    # LUT 导出类型：20.3 实测认整数枚举（2=33pt），字符串 "33PTCube" 返回
+    # False 且不建文件；极老版本可能反过来。两种都备着，谁成功记谁。
+    lut = compat.lut_type(app=resolve)
+    lut_cands = [lut] if lut == "33PTCube" else [lut, "33PTCube"]
     rep["lut_type"] = lut
+    lut_used = None
     rows, seg_luts, problems, skipped_disabled = [], {}, [], []
+    # 同一个片段盖住多段（多机位/合并片段）时只导出一次，其余段复制同一份
+    # cube：达芬奇里那本来就是一个调色，复制成多份只是为了让每段在写回时
+    # 有自己名字的文件，报告和 manifest 都能一段一行对得上。
+    exported = {}
     for (lane, rec), s in sorted(placed.items()):
-        if not [x for x in s["items"] if x["kind"] == "main"]:
+        mains = [x for x in s["items"] if x["kind"] in ("main", "coverage")]
+        if not mains:
             problems.append({"lane": lane, "rec": rec, "why": "该段没有主片段"})
             continue
-        it = None
-        for cand in (tl.GetItemListInTrack("video", lane) or []):
-            if cand.GetStart() - base == rec:
-                it = cand
-                break
+        it = mains[0].get("obj")
+        if it is None:                 # 外部构造的 placed 没有 obj：按位置找
+            for cand in (tl.GetItemListInTrack("video", lane) or []):
+                if cand.GetStart() - base == rec:
+                    it = cand
+                    break
         if it is None:
             problems.append({"lane": lane, "rec": rec, "why": "取不到片段对象"})
             continue
         sid = s["segment_id"]
+        cov = s.get("coverage")
         # 剪映里停用的段，在达芬奇里也是禁用片段：用户看不见它，就不会去调它。
         # 给它导一版 LUT 再写回，等于往停用段里塞一个恒等 cube —— 一旦用户
         # 在剪映里取消停用，画面会莫名其妙多一层处理。所以直接跳过。
@@ -254,39 +381,85 @@ def run(draft_id=None):
                 continue
         except Exception:
             pass
+        prev = exported.get(id(it)) if cov else None
         dst = lut_dir / ("%s.cube" % sid)
-        ok = it.ExportLUT(lut, str(dst))
-        if not ok or not dst.exists() or dst.stat().st_size == 0:
-            time.sleep(0.3)
-            ok = it.ExportLUT(lut, str(dst))
+        if prev is not None:
+            try:
+                shutil.copyfile(prev["cube"], str(dst))
+            except Exception as exc:
+                problems.append({"segment_id": sid,
+                                 "why": "共享 LUT 复制失败：%s" % str(exc)[:80]})
+                continue
+            rows.append({
+                "track": lane, "start": rec, "name": it.GetName(),
+                "segment_id": sid, "cube": str(dst),
+                "bytes": dst.stat().st_size,
+                "graded": prev["graded"],
+                "identity_dev_max": prev["identity_dev_max"],
+                "white_rgb": prev["white_rgb"],
+                "shared_with": prev["segment_id"],
+            })
+            seg_luts[sid] = str(dst)
+            continue
+
+        ok, err = False, ""
+        # 前两版只重试一次、间隔 0.3 秒。真机上多机位/复合片段第一次导出常常
+        # 还没就绪（调色页切过去、节点图建立都需要时间），于是整条报告成
+        # 「ExportLUT 失败」，用户以为这版不支持。给足三次、递增等待。
+        for attempt in range(3):
+            kind = lut_cands[min(attempt, len(lut_cands) - 1)]
+            try:
+                ok = bool(it.ExportLUT(kind, str(dst)))
+                err = ""
+            except Exception as exc:
+                ok, err = False, "%s: %s" % (type(exc).__name__, str(exc)[:80])
+            if ok and dst.exists() and dst.stat().st_size > 0:
+                lut_used = kind
+                break
+            if attempt < 2:
+                time.sleep(0.4 * (attempt + 1))
         if not ok or not dst.exists() or dst.stat().st_size == 0:
             problems.append({"lane": lane, "rec": rec, "segment_id": sid,
-                             "why": "ExportLUT 失败或产出空文件"})
+                             "why": "ExportLUT 失败或产出空文件",
+                             "page_ok": page_ok,
+                             "returned": ok, "error": err,
+                             "multicam": bool(cov and cov["multicam"])})
             continue
-        size, data = load_cube(dst)
-        if size != 33 or len(data) != 33 ** 3:
+        m = measure_cube(dst)
+        if m is None:
             problems.append({"segment_id": sid,
-                             "why": "cube 不完整 size=%s n=%d" % (size, len(data))})
+                             "why": "cube 不完整 size/n 不对"})
             continue
-        devs = []
-        for v in (0, 16, 128, 235, 255):
-            gi = int(round(v / 255.0 * 32))
-            o = at(data, 33, gi, gi, gi)
-            exp = gi / 32.0
-            devs += [abs(o[0] - exp) * 255, abs(o[1] - exp) * 255,
-                     abs(o[2] - exp) * 255]
-        corner = at(data, 33, 32, 32, 32)
-        dev_max = round(max(devs), 2)
-        rows.append({
+        row = {
             "track": lane, "start": rec, "name": it.GetName(),
             "segment_id": sid, "cube": str(dst),
             "bytes": dst.stat().st_size,
             # 「调过色」由导出结果自己说话：偏离恒等就是调过。
-            "graded": dev_max > GRADED_DEV,
-            "identity_dev_max": dev_max,
-            "white_rgb": [round(x * 255, 1) for x in corner],
-        })
+            "graded": m["dev_max"] > GRADED_DEV,
+            "identity_dev_max": m["dev_max"],
+            "white_rgb": m["white_rgb"],
+        }
+        if cov:
+            row["covers"] = cov["count"]
+            row["multicam"] = cov["multicam"]
+        rows.append(row)
         seg_luts[sid] = str(dst)
+        if cov:
+            exported[id(it)] = row
+
+    cov_groups = coverage_groups(placed)
+    rep["lut_type_used"] = lut_used
+    cov_segments = sum(c["count"] for c in cov_groups)
+    rep["coverage"] = cov_groups
+    rep["coverage_segments"] = cov_segments
+    rep["multicam_groups"] = len([c for c in cov_groups if c["multicam"]])
+    if cov_groups:
+        # 不阻断，但必须说清楚：多机位的角度切换不会回传 —— 剪映侧没有
+        # 「角度」这个概念，能带回去的只有整个多机位片段的调色。
+        rep["coverage_note"] = (
+            "%d 个片段合并覆盖了 %d 段（其中多机位 %d 个）：这些段共用同一份"
+            "调色。多机位内部的机位切换不会回传剪映。"
+            % (len(cov_groups), cov_segments, rep["multicam_groups"]))
 
     worst = max((r["identity_dev_max"] for r in rows), default=0.0)
     graded_n = len([r for r in rows if r["graded"]])
@@ -316,5 +489,8 @@ def run(draft_id=None):
                   for r in rows],
     }, os.path.join(run_dir, "manifest.json"))
     rep["ok"] = bool(not problems and (rows or skipped_disabled))
+    if problems and not rep.get("error"):
+        rep["error"] = ("%d 段没能导出 LUT：%s"
+                        % (len(problems), problems[0].get("why") or "原因未知"))
     draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
     return rep

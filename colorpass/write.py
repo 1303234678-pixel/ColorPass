@@ -423,6 +423,12 @@ def run(new_name=None, auto_pull=True):
     # 真正能保证「LUT 不挂错段」的是对齐校验 + 每段的身份标记。
     rep["identity_dev_max"] = pl.get("identity_dev_max")
     rep["identity_graded"] = pl.get("identity_graded")
+    # 多机位/合并片段：一个片段盖住多段时，这些段共用同一份 LUT。
+    # 写回本身照常（每段仍有自己的 cube 文件），但要在结果里说一句 ——
+    # 用户看到「3 段同一个调色」才知道这不是插件搞错了。
+    rep["coverage"] = pl.get("coverage") or []
+    rep["coverage_segments"] = pl.get("coverage_segments") or 0
+    rep["coverage_note"] = pl.get("coverage_note") or ""
 
     seg_luts = pl.get("segment_luts") or {}
     rep["luts"] = len(seg_luts)

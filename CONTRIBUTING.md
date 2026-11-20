@@ -61,7 +61,7 @@ L0  paths.py / probe.py / memscan.py / plain.py    环境与明文来源
 ## 兼容性：没有那台机器怎么验
 
 达芬奇装在 CI 里跑不起来（许可 + GUI），剪映更是只能用真实草稿。所以兼容性
-靠三层，从便宜到贵：
+靠四层，从便宜到贵：
 
 **第一层 · 能力探测 + 签名容忍，不认版本号。**
 调任何可能缺的方法前先 `hasattr`，缺了就降级并把「没生效」写进报告，不抛异常。
@@ -73,7 +73,8 @@ L0  paths.py / probe.py / memscan.py / plain.py    环境与明文来源
 方法签名在版本间变长时，用 `compat.call_shrink()` 从尾部丢参数，**但只在末尾参数
 是可选的时**用；携带必需信息的参数（如片段 marker 里的段号）必须显式分层调用
 （参考 `send.mark_item`），否则会「调用成功但结果不对」。常量缺失用
-`compat.lut_type()` 这类兜底函数，别直接 `resolve.EXPORT_LUT_33PTCUBE`。
+`compat.lut_type()` 这类兜底函数，别直接 `resolve.EXPORT_LUT_33PTCUBE`
+（Python 绑定里可能根本没有这个属性；20.3 认的是整数 2，字符串会静默失败）。
 
 **第二层 · CI 跑平台差异。**
 `windows-latest` 与 `macos-latest` 各跑一遍全量离线测试 + `colorpass doctor --compact`。
@@ -81,9 +82,11 @@ L0  paths.py / probe.py / memscan.py / plain.py    环境与明文来源
 报告完整性」这些真机上最容易出错的纯 Python 部分。mac 本地不用买机器。
 
 **第三层 · 假 API 面回归。**
-`tests/test_compat.py` 按版本增量造出 17 / 18 / 20 三套 API 面（把方法从对象上删掉，
-就是那版的样子），断言缺能力时降级而不是抛异常。加新 API 依赖时，给老surface
-也补一条用例：**没装那版机器，也要能证明它在老版本上不会炸。**
+`tests/test_compat.py` 按版本增量造出 18 / 19 / 20 / 21 四套 API 面（把方法从对象
+上删掉，就是那版的样子），断言缺能力时降级而不是抛异常。加新 API 依赖时，给老
+surface 也补一条用例：**没装那版机器，也要能证明它在老版本上不会炸。**
+多机位相关的行为在 `tests/test_multicam.py`，跑的是真 `pull.verify_alignment`
+与真 `pull.run`（假 API、真文件），不 mock 掉被测逻辑。
 
 **第四层 · 让用户回帖补矩阵。**
 自己没装那个版本时，请对方跑：
@@ -105,6 +108,23 @@ macOS 目前还缺一块：**识别「剪映当前打开的是哪一份草稿」
 所以 `probe.resolve_open_draft` 在 mac 上会明确报「无法自动识别」而不是猜一个
 最近修改的草稿。要补这块需要真机调试（AppleScript / Accessibility 或
 `NSWorkspace` 路线），有 mac 的贡献者可以带着 `doctor` 输出开 issue 讨论。
+
+## 多机位：四条不变量
+
+改 `pull.verify_alignment` / `compat.item_kind` / `multicam.py` 时，这四条不能破：
+
+1. **完全覆盖才算匹配。** 起点、终点都落在计划边界上，中间无缝。差一帧就拒绝，
+   不许「按最近位置吸附」—— LUT 挂错画面的代价比写回失败大得多。
+2. **单段无标记、又不像多机位 → 仍然拒绝。** 这条保的是「用户新拖进来一段」
+   不被当成替换片段。
+3. **共享 LUT 也要每段一个文件。** 多机位覆盖的几段共用一次 ExportLUT，
+   但写回、manifest、报告都按 segment_id 找文件，复制是必须的。
+4. **识别不出来时按普通片段走严格核对。** 多机位没有官方查询接口
+   （`GetType()` 不含 multicam，也没有 `IsMulticamClip()`），推断只能用来
+   放宽，不能用来跳过检查。
+
+新增「这版没有也能用」的 API 时，放进 `compat.OPTIONAL` 而不是 `missing` ——
+否则 18–20 的面板会天天报缺项，用户学会忽略它。会阻断往返的才进 `FATAL`。
 
 ## 加一个「不送」的能力
 
