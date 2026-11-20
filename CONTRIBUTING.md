@@ -94,3 +94,17 @@ macOS 目前还缺一块：**识别「剪映当前打开的是哪一份草稿」
 
 版本号在 `colorpass/__init__.py`。打 tag 前跑一次真实往返（送入 → 调色 → 写回），
 并在 `docs/剪映草稿字段.md` 更新「最后一次实测的剪映版本」。
+
+出安装包的顺序（版本号一改就要全走一遍，安装器文件名和横幅上的版本都读它）：
+
+```bash
+python tools/make_logo.py         # 横幅上印版本号
+python tools/build_installer.py   # dist/ColorPass-Setup-<版本>.exe
+```
+
+然后把 exe 挂到 Release，并在 release note 里写上构建脚本打印的 SHA256 ——
+测试者下完可以自己核对，也方便判断「是不是同一个包」。
+
+安装器的两条路径（源码模式 / 打包模式）写的是同一份 `config.json`，区别只在
+`cli` 还是 `product`+`python`。改面板的启动逻辑时，两个模式都要试：
+`python -m colorpass.install` 与双击 setup exe，各点一次「刷新」看状态栏有没有出草稿名。

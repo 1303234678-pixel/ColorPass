@@ -87,6 +87,19 @@ def _find_product():
     return ""
 
 
+def _find_cli():
+    """打包安装时，install 会把 ColorPass.exe 的路径写进 config.json。
+
+    有它就不需要本机装 Python：子进程直接调 exe。源码模式没有这一项，
+    照旧走 `python -m colorpass.cli`。
+    """
+    conf = _conf()
+    for c in (os.environ.get("COLORPASS_CLI"), conf.get("cli")):
+        if c and os.path.isfile(c):
+            return c
+    return ""
+
+
 def _ver_key(path):
     m = re.search(r"[Pp]ython(\d)(\d+)", path.replace("\\", "/"))
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
@@ -122,6 +135,21 @@ def _find_python():
 
 PY = _find_python()
 PRODUCT = _find_product()
+CLI = _find_cli()
+
+
+def _cmd(action, extra=None):
+    """子进程该跑什么：(命令, 工作目录)。
+
+    打包模式优先 —— 用户机器上没装 Python 也能用；源码模式给开发用。
+    """
+    if CLI:
+        return [CLI, action] + list(extra or []), (PRODUCT or None)
+    return [PY, "-m", "colorpass.cli", action] + list(extra or []), PRODUCT
+
+
+def _no_backend():
+    return not PRODUCT and not CLI
 # 面板自己的日志与子进程输出放在 %LOCALAPPDATA%\ColorPass\panel\
 # 不再借用 drx\generated\ —— 那个目录属于已移除的一级调色插件。
 OUT = os.path.join(BASE_DIR, "panel")
@@ -132,11 +160,11 @@ NO_WIN = 0x08000000 if sys.platform.startswith("win") else 0
 # 找不到源码目录时，面板唯一的正确动作是「说清楚怎么修」，而不是弹一个
 # 子进程报错让人去猜。三条路按从省事到麻烦排。
 _NO_PRODUCT = (
-    "找不到 ColorPass 源码目录（需要包含 colorpass/cli.py）。\n\n"
+    "找不到 ColorPass 的运行入口（源码目录或打包好的 ColorPass.exe）。\n\n"
     "任选一种：\n"
-    "  1) 在克隆下来的目录里运行  python -m colorpass.install\n"
-    "  2) 设环境变量 COLORPASS_HOME 指向那个目录\n"
-    "  3) 或用 pip 安装后重新运行一次 install\n\n"
+    "  1) 双击安装程序 ColorPass-Setup.exe 重新安装\n"
+    "  2) 在克隆下来的目录里运行  python -m colorpass.install\n"
+    "  3) 设环境变量 COLORPASS_HOME 指向源码目录\n\n"
     "装好后重启达芬奇。")
 
 # 子进程一律按 utf-8 说话。不设的话 Windows 会按 cp936 写管道，面板再按
@@ -470,12 +498,13 @@ class Panel(object):
     # ---------- 状态（后台线程，绝不阻塞 StepLoop） ----------
     def _status_worker(self):
         rep, err = {}, None
-        if not PRODUCT:
+        if _no_backend():
             err = _NO_PRODUCT
         else:
             try:
+                cmd, cwd = _cmd("status")
                 r = subprocess.run(
-                    [PY, "-m", "colorpass.cli", "status"], cwd=PRODUCT,
+                    cmd, cwd=cwd,
                     capture_output=True, text=True, timeout=STATUS_TIMEOUT,
                     creationflags=NO_WIN, encoding="utf-8", errors="replace",
                     env=ENV)
@@ -623,7 +652,7 @@ class Panel(object):
 
     # ---------- 子进程任务 ----------
     def start_job(self, action, label, extra=None):
-        if not PRODUCT:
+        if _no_backend():
             self.say_r(_NO_PRODUCT)
             return
         if self.job and self.job["proc"].poll() is None:
@@ -637,9 +666,9 @@ class Panel(object):
         except Exception as exc:
             self.say_r("无法写结果文件：%s" % exc)
             return
-        cmd = [PY, "-m", "colorpass.cli", action] + list(extra or [])
+        cmd, cwd = _cmd(action, extra)
         try:
-            proc = subprocess.Popen(cmd, cwd=PRODUCT, stdout=f,
+            proc = subprocess.Popen(cmd, cwd=cwd, stdout=f,
                                     stderr=subprocess.STDOUT,
                                     creationflags=NO_WIN, env=ENV)
         except Exception as exc:

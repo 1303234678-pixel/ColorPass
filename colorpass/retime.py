@@ -24,6 +24,7 @@ SetRetimeSpeed / SetClipSpeed / Timeline.SetClipsSpeed 等 11 个候选全是 No
 """
 import os
 import re
+import shutil
 import subprocess
 
 from . import paths
@@ -36,9 +37,22 @@ _FF = None
 
 def _ffmpeg():
     """ffmpeg 可执行文件路径。缓存一次：available() 每次送入都会调，
-    imageio_ffmpeg.get_ffmpeg_exe() 内部要扫包目录，反复调纯属浪费。"""
+    imageio_ffmpeg.get_ffmpeg_exe() 内部要扫包目录，反复调纯属浪费。
+
+    取值顺序：COLORPASS_FFMPEG → PATH 上的 ffmpeg → imageio_ffmpeg 自带的那个。
+    中间那档是为了打包版：安装包不塞 80 MB 的 ffmpeg，装了 ffmpeg 的机器
+    照样能用预渲染；没有就退回占位对齐（send 里会说明）。
+    """
     global _FF
     if _FF is None:
+        env = os.environ.get("COLORPASS_FFMPEG")
+        if env and os.path.isfile(env):
+            _FF = env
+            return _FF
+        found = shutil.which("ffmpeg")
+        if found:
+            _FF = found
+            return _FF
         try:
             import imageio_ffmpeg
             _FF = imageio_ffmpeg.get_ffmpeg_exe() or ""

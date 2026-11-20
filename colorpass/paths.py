@@ -74,7 +74,14 @@ SPEED_MODES = ("slot", "source", "bake")
 
 
 def ensure(*parts):
-    p = os.path.join(*parts) if parts else BASE
+    """建目录并返回路径。相对路径一律接在 BASE 下面。
+
+    原来直接 `os.path.join(*parts)`，于是 `ensure("bin")` 得到的是相对于
+    当前工作目录的 `bin` —— 打包安装器正好是这么调的，结果运行时被复制到了
+    安装器 exe 所在目录（也就是用户的下载文件夹），配置里写了个随时会被
+    清掉的路径。绝对路径（LUT_ROOT 那些）不受影响：join 遇到绝对段就直接换根。
+    """
+    p = os.path.join(BASE, *parts) if parts else BASE
     os.makedirs(p, exist_ok=True)
     return p
 

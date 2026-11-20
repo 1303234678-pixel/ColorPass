@@ -59,12 +59,24 @@ def _targets():
 TARGETS = _targets()
 
 
-def write_config(product=None, python=None):
-    """记下面板要找的两个路径。失败不致命 —— 面板还有环境变量兜底。"""
-    cfg = {
-        "product": os.path.abspath(product or paths.PRODUCT_DIR),
-        "python": python or sys.executable,
-    }
+def write_config(product=None, python=None, cli=None):
+    """记下面板要找的路径。失败不致命 —— 面板还有环境变量兜底。
+
+    product/python：源码模式，面板用 `python -m colorpass.cli` 起子进程
+    cli           ：打包模式，面板直接调那个 exe（不需要装 Python）
+    传空串表示「这一项不写」—— 打包安装时 python 就不该写。
+    """
+    if product is None:
+        product = paths.PRODUCT_DIR
+    if python is None:
+        python = sys.executable
+    cfg = {}
+    if product:
+        cfg["product"] = os.path.abspath(product)
+    if python:
+        cfg["python"] = python
+    if cli:
+        cfg["cli"] = os.path.abspath(cli)
     try:
         os.makedirs(paths.BASE, exist_ok=True)
         with open(CONF_PATH, "w", encoding="utf-8") as f:
@@ -75,47 +87,65 @@ def write_config(product=None, python=None):
         return {}
 
 
-def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
-    remove = "--remove" in argv
-    paths.migrate_legacy_base()
+def install_panels(panel_src=None, remove=False, say=print):
+    """把面板放进达芬奇的插件目录（或删掉）。返回装成功的目录数。
 
-    python = None
-    if "--python" in argv:
-        i = argv.index("--python")
-        if i + 1 < len(argv):
-            python = argv[i + 1]
-
-    if not remove:
-        if not os.path.isfile(PANEL_SRC):
-            print("找不到面板源文件：", PANEL_SRC)
-            return 2
-        cfg = write_config(python=python)
-        if cfg:
-            print("已记录：源码目录 =", cfg["product"])
-            print("        解释器   =", cfg["python"])
-
-    installed = 0
+    抽成函数是因为它有两条入口：源码模式（`python -m colorpass.install`）和
+    打包安装器（setup 里 import 它，面板源文件从 _MEIPASS 取）。
+    """
+    src = panel_src or PANEL_SRC
+    done = 0
     for d in TARGETS:
         if not d or not os.path.isdir(d):
-            print("跳过（目录不存在）：", d)
+            say("跳过（目录不存在）：%s" % d)
             continue
         dst = os.path.join(d, PANEL_NAME)
         stale = os.path.join(d, LEGACY_PANEL_NAME)
         if os.path.exists(stale):
             try:
                 os.remove(stale)
-                print("已移除旧面板", stale)
+                say("已移除旧面板 %s" % stale)
             except OSError as exc:
-                print("旧面板删不掉（请在达芬奇里确认后手动删除）：", stale, exc)
+                say("旧面板删不掉（请在达芬奇里确认后手动删除）：%s %s" % (stale, exc))
         if remove:
             if os.path.exists(dst):
                 os.remove(dst)
-                print("已删除", dst)
+                done += 1
+                say("已删除 %s" % dst)
             continue
-        shutil.copy2(PANEL_SRC, dst)
-        installed += 1
-        print("已安装", dst)
+        os.makedirs(d, exist_ok=True)
+        shutil.copy2(src, dst)
+        done += 1
+        say("已安装 %s" % dst)
+    return done
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    remove = "--remove" in argv
+    paths.migrate_legacy_base()
+
+    def _arg(name):
+        if name in argv:
+            i = argv.index(name)
+            if i + 1 < len(argv):
+                return argv[i + 1]
+        return None
+
+    python = _arg("--python")
+    product = _arg("--product")
+    cli = _arg("--cli")
+
+    if not remove:
+        if not cli and not os.path.isfile(PANEL_SRC):
+            print("找不到面板源文件：", PANEL_SRC)
+            return 2
+        cfg = write_config(product=product, python=python, cli=cli)
+        if cfg:
+            for k, v in cfg.items():
+                print("已记录：%-7s = %s" % (k, v))
+
+    installed = install_panels(remove=remove)
 
     if not remove and not installed:
         print("\n没有找到达芬奇的插件目录。请先启动一次达芬奇，再运行本命令。")

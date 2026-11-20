@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" width="120" alt="ColorPass">
+</p>
+
 # ColorPass
 
 [![CI](https://github.com/1303234678-pixel/ColorPass/actions/workflows/ci.yml/badge.svg)](https://github.com/1303234678-pixel/ColorPass/actions/workflows/ci.yml)
@@ -89,6 +93,21 @@ ColorPass 在草稿语义层消化这些属性，再用绝对帧号落轨：
 
 ## 安装
 
+### 方式一：安装包（推荐给测试者）
+
+下载 `ColorPass-Setup-<版本>.exe`，双击即可。安装器会把运行时复制到
+`%LOCALAPPDATA%\ColorPass\bin`，把面板放进达芬奇的插件目录，并写好配置。
+
+**不需要装 Python。** 装完重启达芬奇，菜单 `工作区 → Workflow Integrations → ColorPass`。
+
+- 卸载：`ColorPass-Setup-<版本>.exe --uninstall`（保留草稿缓存与报告）
+- 装完发现菜单里没有：确认达芬奇 ≥ 18；插件目录在
+  `C://ProgramData//Blackmagic Design\DaVinci Resolve\Support\Workflow Integration Plugins`
+- Windows SmartScreen 可能提示「未知发布者」—— 因为没买代码签名证书，点「更多信息 → 仍要运行」。
+  介意的话用方式二自己从源码装。
+
+### 方式二：从源码
+
 ```bash
 git clone https://github.com/1303234678-pixel/ColorPass.git
 cd ColorPass
@@ -96,7 +115,9 @@ python -m pip install -e .
 python -m colorpass.install      # 安装面板，并记录源码目录与解释器路径
 ```
 
-重启达芬奇，菜单 `工作区 → Workflow Integrations → ColorPass`。
+两种方式都会写同一份 `config.json`：源码模式记 `product` 与 `python`，安装包模式记 `cli`。
+面板优先用 `cli`（不需要 Python），没有才回退到 `python -m colorpass.cli`。
+重新运行任一方式的安装命令即可切换，互不冲突。
 
 可选依赖：
 
@@ -104,6 +125,10 @@ python -m colorpass.install      # 安装面板，并记录源码目录与解释
 python -m pip install -e ".[cover]"     # 草稿封面缩略图（Pillow）
 python -m pip install -e ".[ffmpeg]"    # 变速预渲染（缺省时退回近似摆放）
 ```
+
+安装包里**没有**打包 ffmpeg（那会让体积从 20 MB 涨到 186 MB）。需要帧级准确的变速预渲染时，
+把 `ffmpeg` 放进 PATH 或设 `COLORPASS_FFMPEG` 指向它；没有就自动退回「占位对齐」模式，
+并在报告里写明。要打全量包：`python tools/build_installer.py --with-ffmpeg`。
 
 ## 命令行
 
@@ -210,9 +235,19 @@ python -m unittest discover -s tests -p "test_*.py"
 python -m ruff check colorpass tests --line-length 100
 ```
 
-323 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
+330 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
 Ubuntu 静态检查、Windows 3.9 / 3.12 与 macOS 3.9 / 3.12 全量测试，
 并在无达芬奇的环境下跑一次 `colorpass doctor` 验证报告完整性。
+
+打安装包（需要 `pip install pyinstaller`）：
+
+```bash
+python tools/make_logo.py        # 图标 / .ico / 横幅（改版本号后重跑，横幅上的版本会跟着变）
+python tools/build_installer.py  # 产出 dist/ColorPass（运行时）与 dist/ColorPass-Setup-<版本>.exe
+```
+
+产物与目录：`installer/entry_cli.py`（运行时入口）、`installer/entry_setup.py`（安装器逻辑）、
+`tools/build_installer.py`（两次 PyInstaller 调用与裁剪规则）、`assets/`（图标与横幅）。
 
 ## 许可证
 
