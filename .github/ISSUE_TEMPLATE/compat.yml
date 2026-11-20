@@ -11,18 +11,19 @@ body:
         一次说清，比贴截图有用得多：
 
         ```bash
-        colorpass doctor
+        colorpass compat     # 一句话结论 + 缺项影响
+        colorpass doctor     # 全量快照
         ```
 
-        输出里有系统、达芬奇版本、每个对象缺哪几个方法、实际加载到的脚本模块路径。
-        不含素材内容与草稿正文，贴之前可以自己过一眼。
+        不想开终端也可以：面板页脚点「诊断」，把框里的文字全选复制。
+        输出只有系统、版本、路径与 API 有无，不含素材内容与草稿正文。
 
   - type: textarea
     id: doctor
     attributes:
-      label: colorpass doctor 输出
-      description: 整段粘贴即可；嫌长用 `colorpass doctor --compact` 出单行 JSON
-      render: json
+      label: colorpass compat / doctor 输出
+      description: 整段粘贴即可；doctor 嫌长可用 `--compact` 出单行 JSON
+      render: text
     validations:
       required: true
 

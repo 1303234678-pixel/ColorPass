@@ -81,7 +81,8 @@ class _FakeUI(object):
         return f
 
     def __getattr__(self, name):
-        if name in ("HGroup", "VGroup", "Label", "Button", "LineEdit", "VGap"):
+        if name in ("HGroup", "VGroup", "Label", "Button", "LineEdit",
+                    "VGap", "TextEdit"):
             return self._mk(name)
         raise AttributeError(name)
 
@@ -171,6 +172,22 @@ class _Sub(object):
         return _Proc(0)
 
 
+class _FlakyDisp(_Disp):
+    """前 n 次 AddWindow 返回 None —— 模拟「这版 Fusion 不认 StyleSheet」。"""
+
+    def __init__(self, ui, fail_times=1):
+        _Disp.__init__(self, ui)
+        self.fail_left = fail_times
+        self.calls = []
+
+    def AddWindow(self, definition, layout):
+        self.calls.append(dict(definition))
+        if self.fail_left > 0:
+            self.fail_left -= 1
+            return None
+        return _Disp.AddWindow(self, definition, layout)
+
+
 # ---------------------------------------------------------------- 载入面板
 def load_panel(path=None, payload=None):
     """截掉末尾自启动后 exec，返回模块命名空间。
@@ -258,7 +275,8 @@ class PanelSlimTest(unittest.TestCase):
     def test_buttons_wired(self):
         ns, p = make_panel(payload=STATUS_OK)
         on = p.win.On
-        for b in ("btnSend", "btnWrite", "btnLock", "btnRefresh", "btnGc"):
+        for b in ("btnSend", "btnWrite", "btnLock", "btnRefresh", "btnGc",
+                  "btnDiag"):
             self.assertTrue(callable(getattr(getattr(on, b), "Clicked", None)),
                             "%s 没有接上回调" % b)
 
@@ -294,7 +312,7 @@ class PanelSlimTest(unittest.TestCase):
                                         cache_free_bytes=None,
                                         cache_extra_bytes=None))
         p.apply_status()
-        self.assertEqual(p.items["jybCache"].Text, "可清理：—")
+        self.assertEqual(p.items["jybCache"].Text, "可清理 —")
 
     # ---- 草稿被改过：送入前弹提示 ----
     def test_send_blocked_when_draft_edited(self):
@@ -308,7 +326,9 @@ class PanelSlimTest(unittest.TestCase):
                        draft_opened_text="11-19 23:38:25")
         ns, p = make_panel(payload=payload)
         p.apply_status()
-        self.assertIn("已改", p.items["jybDraft"].Text)
+        # 草稿名单独一行（不再带「当前草稿：」前缀），状态交给右上角那两个字
+        self.assertEqual(p.items["jybDraft"].Text, "测试草稿")
+        self.assertEqual(p.items["jybState"].Text, "● 待重开")
         self.assertIn("重开", p.items["jybInfo"].Text)
         got = []
         p.start_job = lambda action, label, extra=None: got.append(action)
@@ -327,7 +347,7 @@ class PanelSlimTest(unittest.TestCase):
         payload = dict(STATUS_OK, draft_edited=False)
         ns, p = make_panel(payload=payload)
         p.apply_status()
-        self.assertNotIn("已改", p.items["jybDraft"].Text)
+        self.assertEqual(p.items["jybState"].Text, "● 就绪")
         got = []
         p.start_job = lambda action, label, extra=None: got.append(action)
         p.win.On.btnSend.Clicked(None)
@@ -339,7 +359,7 @@ class PanelSlimTest(unittest.TestCase):
                        cache_free_bytes=0, cache_extra_bytes=0)
         ns, p = make_panel(payload=payload)
         p.apply_status()
-        self.assertEqual(p.items["jybCache"].Text, "可清理：无")
+        self.assertEqual(p.items["jybCache"].Text, "无可清理项")
         self.assertFalse(p.items["btnGc"].Enabled,
                          "写着 0 还让点，就是又一次「点了没反应」")
 
@@ -375,9 +395,10 @@ class PanelSlimTest(unittest.TestCase):
 
     # ---- 草稿显示 / 刷新 / 禁用 ----
     def test_draft_label_shows_current_draft(self):
+        """草稿名单独一行大字。上面那行小字已经是「当前草稿」这个标签了。"""
         ns, p = make_panel(payload=STATUS_OK)
         p.apply_status()
-        self.assertEqual(p.items["jybDraft"].Text, "当前草稿：测试草稿")
+        self.assertEqual(p.items["jybDraft"].Text, "测试草稿")
 
     def test_send_and_write_disabled_without_draft(self):
         ns, p = make_panel(payload={"draft": None, "jianying": {"processes": [1]},
@@ -386,7 +407,7 @@ class PanelSlimTest(unittest.TestCase):
         self.assertFalse(p.items["btnSend"].Enabled)
         self.assertFalse(p.items["btnWrite"].Enabled)
         self.assertTrue(p.items["btnRefresh"].Enabled)
-        self.assertEqual(p.items["jybDraft"].Text, "当前草稿：—")
+        self.assertEqual(p.items["jybDraft"].Text, "—")
 
     def test_send_and_write_enabled_with_draft(self):
         ns, p = make_panel(payload=STATUS_OK)
@@ -476,7 +497,8 @@ class PanelSlimTest(unittest.TestCase):
     def test_apply_status_ready(self):
         ns, p = make_panel(payload=STATUS_OK)
         p.apply_status()
-        self.assertIn("就绪", p.items["jybInfo"].Text)
+        self.assertEqual(p.items["jybState"].Text, "● 就绪")
+        self.assertIn("可以送入", p.items["jybInfo"].Text)
         self.assertIn("测试草稿", p.items["jybDraft"].Text)
 
     def test_apply_status_not_running(self):
@@ -666,7 +688,7 @@ class PanelSlimTest(unittest.TestCase):
         self.assertIn("释放 4.0 KB", shown)
         p.apply_status()                      # 状态刷新回来
         self.assertEqual(p.items["jybResult"].Text, shown, "结果行不该被状态覆盖")
-        self.assertIn("测试草稿", p.items["jybInfo"].Text)
+        self.assertIn("测试草稿", p.items["jybDraft"].Text)
 
     def test_gc_empty_explains_and_offers_deep_clean(self):
         ns, p = make_panel(payload=STATUS_OK)
@@ -726,7 +748,7 @@ class PanelSlimTest(unittest.TestCase):
             p._st_result = dict(STATUS_OK, draft="补刷的草稿")
         p.apply_status()
         self.assertFalse(p._want_refresh)
-        self.assertIn("补刷的草稿", p.items["jybInfo"].Text)
+        self.assertIn("补刷的草稿", p.items["jybDraft"].Text)
 
     def test_gc_empty_without_intermediate_has_no_action(self):
         ns, p = make_panel(payload=STATUS_OK)
@@ -736,6 +758,60 @@ class PanelSlimTest(unittest.TestCase):
         p.poll_job()
         self.assertFalse(p._dlg.GetItems()["dAct"].Enabled,
                          "没有可清的中间产物时不该给一个空按钮")
+
+    # ---- 建窗降级 ----
+    def test_falls_back_to_plain_when_styles_rejected(self):
+        """带样式建不出来时，去掉样式再建一次 —— 面板不能因此打不开。
+
+        `StyleSheet` / `MinimumSize` 不是每个 Fusion 版本都认；认不了的版本
+        AddWindow 直接返回 None。整窗打不开是最坏的结果，比没有质感严重得多。
+        """
+        ns = load_panel(payload=STATUS_OK)
+        ui = ns["fusion"].UIManager
+        disp = _FlakyDisp(ui, fail_times=1)
+        ns["bmd"] = _Bmd(disp)
+        Panel = ns["Panel"]
+        Panel.loop = lambda self: None
+        p = Panel()
+        self.assertFalse(p.styled, "第二次必须是「不带样式」的那一版")
+        self.assertEqual(len(disp.calls), 2)
+        self.assertIn("StyleSheet", disp.calls[0], "第一次应该带着样式试")
+        self.assertNotIn("StyleSheet", disp.calls[1], "重试时样式必须摘掉")
+        # 降级之后功能一个都不许少
+        p.apply_status()
+        self.assertIn("测试草稿", p.items["jybDraft"].Text)
+        self.assertTrue(callable(getattr(p.win.On.btnSend, "Clicked", None)))
+
+    def test_last_resort_minimal_window(self):
+        """连朴素版都建不出来时，退到一个空壳，不许抛异常。"""
+        ns = load_panel(payload=STATUS_OK)
+        ns["bmd"] = _Bmd(_FlakyDisp(ns["fusion"].UIManager, fail_times=2))
+        Panel = ns["Panel"]
+        Panel.loop = lambda self: None
+        p = Panel()
+        self.assertIsNotNone(p.win)
+        self.assertEqual(p.win.definition["ID"], "jybWin_c")
+    # ---- 兼容性自检 ----
+    def test_diag_shows_copyable_report(self):
+        """「诊断」把自检结果摊在一个可全选复制的框里。
+
+        这个工具是发给别人测的，出问题的人不一定会开终端。点一下 → 全选 →
+        复制 → 发回来，这三步必须在面板里能完成。
+        """
+        ns, p = make_panel(payload=STATUS_OK)
+        p.win.On.btnDiag.Clicked(None)          # 假线程是同步的，跑完即返回
+        p.poll_diag()
+        self.assertIsNotNone(p._dlg, "自检必须有结果窗口")
+        text = p._dlg.GetItems()["dMsg"].Text
+        self.assertTrue(text.strip(), "结果不能是空的")
+        self.assertIn("测试草稿", text, "这里应带上 status 的输出")
+
+    def test_diag_runs_once_at_a_time(self):
+        ns, p = make_panel(payload=STATUS_OK)
+        p._diag_running = True
+        p.win.On.btnDiag.Clicked(None)
+        self.assertEqual(p._diag_text, "", "正在跑就别再起一个")
+
 
 
 if __name__ == "__main__":

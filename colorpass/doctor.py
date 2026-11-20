@@ -20,7 +20,7 @@ import platform
 import sys
 import tempfile
 
-from . import __version__, install, memscan, paths, probe, resolve, retime
+from . import __version__, compat, install, memscan, paths, probe, resolve, retime
 
 
 def _try(fn, default=None):
@@ -160,6 +160,9 @@ def run(app=None):
         "platform": _platform(),
         "data": _data_dir(),
         "resolve": _resolve_part(app),
+        # 同一份能力清单，换成「缺了会怎样」的说法 —— doctor 给人看，
+        # compat 给面板和命令行用，数据源只有一个。
+        "compat": _try(compat.report, {}) or {},
         "jianying": _jianying_part(),
         "capabilities": _capabilities(),
         "panel": _panel_part(),

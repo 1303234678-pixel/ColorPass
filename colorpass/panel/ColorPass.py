@@ -172,6 +172,7 @@ _NO_PRODUCT = (
 ENV = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
 
 WIN_ID = "jybWin"
+WIN_W, WIN_H = 460, 470
 SLEEP_IDLE = 0.05
 SLEEP_BUSY = 0.02
 STATUS_TIMEOUT = 15          # 秒；旧版 25 秒在慢盘上会明显拖住面板
@@ -206,6 +207,84 @@ def human_bytes(n):
 
 
 note("module loaded (pid=%d)" % os.getpid())
+
+
+# ---------------------------------------------------------------- 外观
+#
+# 面板跑在达芬奇的 Fusion 进程里，能用的只有 Qt 控件 + Qt 样式表。所以「质感」
+# 只能靠三件事做出来：**字号层级、留白节奏、一个强调色**。阴影、毛玻璃、动效
+# 这里都没有 —— 在这上面花力气只会换来各版本表现不一致。
+#
+# 定下来的规矩（改的时候别破坏）：
+#   · 只有一个强调色，只给主按钮和「执行中」。其余一律灰阶。
+#   · 字号只用四级：20 / 17 / 13 / 11。层级靠留白拉开，不靠一路加粗。
+#   · 间距一律 4 的倍数，窗口左右各留 20，上下各留 20。
+#   · 分隔用 1px 细线 + 大留白，不堆边框、不堆卡片底色。
+#   · 字体用系统中文字体。指定拉丁字体会让中英混排一高一低。
+#   · 一个动作只出现一次。「锁定 / 清理 / 刷新」是工具，压到页脚当小字。
+
+
+def _font_family():
+    """系统中文字体。Qt 的 font-family 只认第一个能命中的，所以给一个就够。"""
+    if sys.platform == "darwin":
+        return "PingFang SC"
+    if sys.platform.startswith("win"):
+        return "Microsoft YaHei UI"
+    return "Noto Sans CJK SC"
+
+
+FONT = _font_family()
+
+C_ACCENT = "#0A84FF"        # 唯一强调色（系统蓝）
+C_TEXT = "#F2F2F7"          # 主文字
+C_SUB = "#9A9AA0"           # 次要文字
+C_DIM = "#6E6E73"           # 说明 / 占位
+C_LINE = "#3A3A3C"          # 分隔线
+C_FIELD = "#2C2C2E"         # 次按钮底色 / 输入框
+C_BG = "#1C1C1E"            # 面板底色（钉死深色，宿主换主题也不跑版）
+C_OK = "#30D158"
+C_WARN = "#FF9F0A"
+C_ERR = "#FF453A"
+
+GAP = 4                     # 所有间距都是它的倍数
+
+
+def _qss(body):
+    return "font-family:%s;%s" % (FONT, body)
+
+
+def _text_qss(size, color, weight=0):
+    body = "color:%s;font-size:%spx;background:transparent;" % (color, size)
+    if weight:
+        body += "font-weight:%d;" % weight
+    return _qss(body)
+
+
+def _btn_qss(kind, enabled=True):
+    """按钮样式。禁用态直接换一套样式 —— 不靠 `:disabled` 选择器。
+
+    为什么不用伪状态：Fusion 的元素不一定就是 QPushButton 类，类型选择器可能
+    根本不命中；属性块一定能命中。代价是禁用时要自己换样式，见 _set_enabled。
+    """
+    if not enabled:
+        return _qss("color:%s;background-color:transparent;border:1px solid %s;"
+                    "border-radius:9px;font-size:13px;" % (C_DIM, C_LINE))
+    if kind == "primary":
+        return _qss("color:#FFFFFF;background-color:%s;border:0px;"
+                    "border-radius:9px;font-size:13px;font-weight:600;"
+                    "padding:0 16px;" % C_ACCENT)
+    if kind == "secondary":
+        return _qss("color:%s;background-color:%s;border:0px;border-radius:9px;"
+                    "font-size:13px;padding:0 16px;" % (C_TEXT, C_FIELD))
+    # ghost：页脚那三个工具动作，压到最小存在感
+    return _qss("color:%s;background-color:transparent;border:0px;border-radius:7px;"
+                "font-size:11px;padding:0 8px;" % C_SUB)
+
+
+def _input_qss():
+    return _qss("color:%s;background-color:%s;border:1px solid %s;"
+                "border-radius:8px;padding:0 10px;font-size:12px;"
+                "selection-background-color:%s;" % (C_TEXT, C_FIELD, C_LINE, C_ACCENT))
 
 
 class Panel(object):
@@ -250,6 +329,11 @@ class Panel(object):
         # 面板上的缓存/送去状态停在任务前。
         self._want_refresh = False
 
+        # 兼容性自检：后台线程跑 `cli compat`，结果贴回来再弹窗。
+        # 单飞 + 结果暂存 —— 主循环不能等子进程（同 status 的理由）。
+        self._diag_running = False
+        self._diag_text = ""
+
         self._close_existing()
         if not self._build_window():
             return
@@ -292,89 +376,208 @@ class Panel(object):
                     continue
             note("closed existing window %s" % wid)
 
-    def _name_row(self):
-        """新草稿名输入框。LineEdit 在部分 Fusion 版本上没有，拿不到就退化成
-        一行提示（写回仍可用，只是走自动命名），绝不能让整个面板打不开。"""
+    # ---------- 画窗口 ----------
+    #
+    # 三级降级：带样式 → 不带样式 → 一个空壳。
+    # `StyleSheet` / `MinimumSize` 不是每个 Fusion 版本都认，认不了的版本
+    # AddWindow 直接返回 None（整窗打不开）。样式可以没有，面板不能没有。
+
+    def _S(self, qss):
+        """样式开关：plain 模式下所有样式属性都被丢掉。"""
+        return {"StyleSheet": qss} if getattr(self, "styled", True) else {}
+
+    def _box(self, h, w=9999):
+        """高度钉死、宽度放开 —— 字体差一像素也不会把控件挤变形。"""
+        if not getattr(self, "styled", True):
+            return {}
+        return {"MinimumSize": [0, h], "MaximumSize": [w, h]}
+
+    def _pad(self, w):
+        """左右留白。Fusion 的组没有 margin 属性，只能用定宽空标签撑。"""
+        props = {"Text": "", "Weight": 0}
+        if getattr(self, "styled", True):
+            props.update({"MinimumSize": [w, 0], "MaximumSize": [w, 9999]})
+            props["StyleSheet"] = "background:transparent;"
+        return self.ui.Label(props)
+
+    def _spacer(self, weight=1):
+        """吃掉多余空间。空 Label 带 Weight 是最稳的弹簧（VGap 没有 Weight）。"""
+        return self.ui.Label({"Text": "", "Weight": weight})
+
+    def _rule(self):
+        """1px 分隔线：拿 Label 的底色画，不引分割控件。"""
+        props = {"Text": "", "Weight": 0}
+        if getattr(self, "styled", True):
+            props.update({"MinimumSize": [0, 1], "MaximumSize": [9999, 1],
+                          "StyleSheet": "background-color:%s;" % C_LINE})
+        return self.ui.Label(props)
+
+    def _header(self):
+        """品牌 + 当前状态。状态点用 ● 上色 —— 比画一个圆角块稳。"""
+        ui, s = self.ui, self._S
+        left = ui.VGroup({"Weight": 1}, [
+            ui.Label({"ID": "jybTitle", "Text": "ColorPass", "Weight": 0,
+                      **s(_text_qss(17, C_TEXT, 600))}),
+            ui.VGap(2),
+            ui.Label({"ID": "jybSub", "Text": "剪映 → 达芬奇 · 往返调色",
+                      "Weight": 0, **s(_text_qss(11, C_SUB))}),
+        ])
+        # 状态做成一个标签（「● 就绪」），不拆点 + 文字两个控件：
+        # 拆开就要靠间距对齐，而 Fusion 各版本对 Gap 的支持不一致。
+        right = ui.Label({"ID": "jybState", "Text": "● 检测中", "Weight": 0,
+                          **s(_text_qss(11, C_SUB))})
+        return ui.HGroup({"Weight": 0}, [left, right])
+
+    def _draft_block(self):
+        """一块只在说一件事：现在剪映里是哪份草稿、能不能用。"""
+        ui, s = self.ui, self._S
+        props = {"ID": "jybInfo", "Text": "正在读取剪映…", "Weight": 0,
+                 "WordWrap": True}
+        props.update(self._box(34))
+        props.update(s(_text_qss(11, C_SUB)))
+        return ui.VGroup({"Weight": 0}, [
+            ui.Label({"Text": "当前草稿", "Weight": 0, **s(_text_qss(10, C_DIM))}),
+            ui.VGap(3),
+            ui.Label({"ID": "jybDraft", "Text": "—", "Weight": 0,
+                      **s(_text_qss(20, C_TEXT, 600))}),
+            ui.VGap(4),
+            ui.Label(props),
+        ])
+
+    def _action_block(self):
+        """两个动作，一主一次。顺序就是使用顺序，不需要编号解释。"""
+        ui, s = self.ui, self._S
+        send = {"ID": "btnSend", "Text": "送入达芬奇", "Weight": 0}
+        send.update(self._box(38))
+        send.update(s(_btn_qss("primary")))
+        write = {"ID": "btnWrite", "Text": "写回剪映", "Weight": 0}
+        write.update(self._box(34))
+        write.update(s(_btn_qss("secondary")))
+        return ui.VGroup({"Weight": 0}, [ui.Button(send), ui.VGap(8),
+                                         ui.Button(write)])
+
+    def _result_line(self):
+        props = {"ID": "jybResult", "Text": "", "Weight": 0, "WordWrap": True}
+        props.update(self._box(34))
+        props.update(self._S(_text_qss(11, C_SUB)))
+        return self.ui.Label(props)
+
+    def _name_block(self):
+        """新草稿名。放在动作下面 —— 它只在「写回」那一步用得上。"""
+        ui, s = self.ui, self._S
+        return ui.VGroup({"Weight": 0}, [
+            ui.Label({"Text": "新草稿名", "Weight": 0, **s(_text_qss(10, C_DIM))}),
+            ui.VGap(4),
+            self._name_input(),
+        ])
+
+    def _name_input(self):
+        """LineEdit 在部分 Fusion 版本上没有，拿不到就退化成一行说明。
+
+        写回仍可用，只是走自动命名；面板本身必须能开。
+        """
+        ui = self.ui
+        props = {"ID": "txtName", "Text": "",
+                 "PlaceholderText": "留空＝按「草稿名_调色」自动命名"}
+        props.update(self._box(30))
+        props.update(self._S(_input_qss()))
         try:
-            return self.ui.HGroup({"Weight": 0}, [
-                self.ui.Label({"Text": "新草稿名", "Weight": 0}),
-                self.ui.LineEdit({"ID": "txtName", "Text": "",
-                                  "PlaceholderText": "留空＝自动命名（草稿名_调色）",
-                                  "Weight": 1}),
-            ])
+            return ui.LineEdit(props)
         except Exception as exc:
             note("LineEdit unavailable: %r" % (exc,))
             try:
-                return self.ui.Label(
-                    {"Text": "新草稿名：本版本面板不支持输入，"
-                             "用命令行 write --name 指定", "Weight": 0})
+                return ui.Label({"Text": "本版本面板不支持输入，"
+                                         "用命令行 write --name 指定",
+                                 "Weight": 0, **self._S(_text_qss(11, C_DIM))})
             except Exception:
-                return None
+                return self._spacer(0)
+
+    def _footer(self):
+        """工具动作。都不改变主流程，所以只给 11px 的灰字，不给按钮外观。"""
+        ui, s = self.ui, self._S
+
+        def ghost(wid, text):
+            props = {"ID": wid, "Text": text, "Weight": 0}
+            props.update(self._box(24))
+            props.update(s(_btn_qss("ghost")))
+            return ui.Button(props)
+
+        # 左状态、右动作 —— 一眼分得清「信息」和「能点的东西」。
+        cache = {"ID": "jybCache", "Text": "可清理 —", "Weight": 1}
+        cache.update(s(_text_qss(11, C_DIM)))
+        return ui.HGroup({"Weight": 0}, [
+            ui.Label(cache),
+            ghost("btnDiag", "诊断"),
+            ghost("btnLock", "锁定轨道"),
+            ghost("btnGc", "清理"),
+            ghost("btnRefresh", "刷新"),
+        ])
+
+    def _body(self):
+        """竖排内容 + 左右各 20 的留白。
+
+        窗口是固定的 460×470；多余的高度由中间那个空 Label 吃掉，所以窗口
+        被拉高时只有中间变空，标题贴着顶、页脚贴着底 —— 不会散架。
+        """
+        ui = self.ui
+        inner = ui.VGroup({"Weight": 1}, [
+            self._header(),
+            ui.VGap(GAP * 5),
+            self._draft_block(),
+            ui.VGap(GAP * 4),
+            self._action_block(),
+            ui.VGap(GAP),
+            self._result_line(),
+            ui.VGap(GAP * 3),
+            self._rule(),
+            ui.VGap(GAP * 3),
+            self._name_block(),
+            self._spacer(),
+            self._rule(),
+            ui.VGap(GAP * 2),
+            self._footer(),
+            ui.VGap(GAP * 5),
+        ])
+        return [ui.HGroup({"Weight": 1},
+                          [self._pad(20), inner, self._pad(20)])]
+
+    def _add_window(self, mode):
+        """按 mode 建窗。styled 失败会被 _build_window 拿掉样式重试。"""
+        self.styled = (mode == "styled")
+        try:
+            if mode == "minimal":
+                return self.disp.AddWindow(
+                    {"ID": WIN_ID + "_c", "Geometry": [180, 90, 420, 170],
+                     "WindowTitle": "ColorPass"},
+                    self.ui.VGroup([self.ui.Label({"Text": "ColorPass",
+                                                   "Weight": 0})]))
+            win_props = {"ID": WIN_ID, "Geometry": [180, 90, WIN_W, WIN_H],
+                         "WindowTitle": "ColorPass"}
+            if self.styled:
+                win_props["StyleSheet"] = "background-color:%s;" % C_BG
+            return self.disp.AddWindow(win_props, self.ui.VGroup(self._body()))
+        except Exception:
+            note("AddWindow(%s) raised:\n%s" % (mode, traceback.format_exc()))
+            return None
 
     def _build_window(self):
-        """画窗口。返回 False 表示三种尺寸都建不出来，只能放弃。"""
-        name_row = self._name_row()
-        rows = [
-            self.ui.Label({"Text": "<b>剪映 ⇄ 达芬奇</b>（剪辑以剪映为准，达芬奇只调色）",
-                           "Weight": 0}),
-            self.ui.HGroup({"Weight": 0}, [
-                self.ui.Label({"ID": "jybDraft", "Text": "当前草稿：—",
-                               "Weight": 1}),
-                self.ui.Button({"ID": "btnRefresh", "Text": "↻ 刷新",
-                                "Weight": 0}),
-            ]),
-            self.ui.HGroup({"Weight": 0}, [
-                self.ui.Button({"ID": "btnSend", "Text": "① 送入达芬奇", "Weight": 0.5}),
-                self.ui.Button({"ID": "btnWrite",
-                                "Text": "② 写回剪映（按送入那版）", "Weight": 0.5}),
-            ]),
-        ]
-        if name_row is not None:
-            rows.append(name_row)
-        rows += [
-            self.ui.HGroup({"Weight": 0}, [
-                self.ui.Button({"ID": "btnLock", "Text": "锁定 / 解锁轨道",
-                                "Weight": 1.0}),
-            ]),
-            # 缓存行长这样：`可清理：12.3 MB          [清理缓存]`
-            # 数字＝按默认策略真会释放的量（删不掉的不算），0 时按钮禁用。
-            self.ui.HGroup({"Weight": 0}, [
-                self.ui.Label({"ID": "jybCache", "Text": "可清理：—", "Weight": 1}),
-                self.ui.Button({"ID": "btnGc", "Text": "清理缓存", "Weight": 0}),
-            ]),
-            self.ui.Label({"ID": "jybInfo", "Text": "就绪", "Weight": 1,
-                           "WordWrap": True}),
-            # 任务结果单独占一行，不能塞进 jybInfo：任务结束后面板会立刻
-            # refresh_draft()，状态回来会把 jybInfo 整段改写 —— 结果写在那里
-            # 就等于「点了按钮什么都没发生」（2026-11-19 用户连点了 8 次）。
-            self.ui.Label({"ID": "jybResult", "Text": "", "Weight": 0,
-                           "WordWrap": True}),
-        ]
-        title = "ColorPass · 剪映 ↔ 达芬奇"
-        self.win = self.disp.AddWindow(
-            {"ID": WIN_ID, "Geometry": [180, 90, 580, 372],
-             "WindowTitle": title}, self.ui.VGroup(rows))
-        if self.win is None and name_row is not None:
-            # LineEdit 在这个 Fusion 版本上不被接受时会整窗失败：去掉输入框重来，
-            # 写回退化成自动命名（命令行 --name 仍可用），面板本身必须能开。
-            note("AddWindow failed with LineEdit, retry without it")
-            rest = [r for r in rows if r is not name_row]
-            self.win = self.disp.AddWindow(
-                {"ID": WIN_ID + "_b", "Geometry": [180, 90, 580, 342],
-                 "WindowTitle": title}, self.ui.VGroup(rest))
-        if self.win is None:
-            note("AddWindow returned None, retry with fallback id")
-            self.win = self.disp.AddWindow(
-                {"ID": WIN_ID + "_c", "Geometry": [180, 90, 580, 342],
-                 "WindowTitle": title}, self.ui.VGroup([]))
-        if self.win is None:
-            note("AddWindow failed twice, abort")
+        """三级降级建窗。返回 False 表示一个都建不出来。"""
+        win = self._add_window("styled")
+        if win is None:
+            note("styled AddWindow failed, retry without styles")
+            win = self._add_window("plain")
+        if win is None:
+            note("plain AddWindow failed, retry minimal")
+            win = self._add_window("minimal")
+        if win is None:
+            note("AddWindow failed in all modes, abort")
             return False
+        self.win = win
         self.items = self.win.GetItems()
         return True
 
     def _wire(self):
-        """挂回调。窗口 ID 可能是 WIN_ID / _b / _c，谁在就挂谁。"""
+        """挂回调。窗口 ID 可能是 WIN_ID / _c，谁在就挂谁。"""
         for wid in (WIN_ID, WIN_ID + "_b", WIN_ID + "_c"):
             try:
                 getattr(self.win.On, wid).Close = self.on_close
@@ -382,28 +585,64 @@ class Panel(object):
             except Exception:
                 continue
 
-        self.win.On.btnSend.Clicked = lambda _ev: self._on_send()
-        self.win.On.btnWrite.Clicked = lambda _ev: self.start_job(
-            "write", "② 写回剪映", extra=self._write_extra())
-        self.win.On.btnLock.Clicked = lambda _ev: self.start_job(
-            "lock", "切换轨道锁", extra=["off"] if self._lock_state else ["on"])
-        self.win.On.btnRefresh.Clicked = lambda _ev: self.refresh_draft()
-        self.win.On.btnGc.Clicked = lambda _ev: self.start_job(
-            "gc", "清理缓存", extra=self._gc_extra())
+        # 逐个独包：退到「空壳窗口」那一级时，控件根本不存在，
+        # 一次性赋值会在第一个缺失的按钮上抛异常，后面的全挂不上。
+        def hook(wid, fn):
+            try:
+                getattr(self.win.On, wid).Clicked = fn
+            except Exception:
+                note("wire %s failed" % wid)
+
+        hook("btnSend", lambda _ev: self._on_send())
+        hook("btnWrite", lambda _ev: self.start_job(
+            "write", "写回剪映", extra=self._write_extra()))
+        hook("btnLock", lambda _ev: self.start_job(
+            "lock", "切换轨道锁", extra=["off"] if self._lock_state else ["on"]))
+        hook("btnRefresh", lambda _ev: self.refresh_draft())
+        hook("btnGc", lambda _ev: self.start_job(
+            "gc", "清理缓存", extra=self._gc_extra()))
+        hook("btnDiag", lambda _ev: self._on_diag())
 
     # ---------- 界面小工具 ----------
+    def _paint(self, wid, qss):
+        """换一个控件的样式。plain 模式下什么都不做。
+
+        禁用态、执行中、成功/失败 —— 这几种状态都是换样式，不是换控件：
+        面板里每多一个控件，就多一处各版本表现不一致的可能。
+        """
+        if not getattr(self, "styled", True):
+            return
+        try:
+            self.items[wid].StyleSheet = qss
+        except Exception:
+            pass
+
+    def set_state(self, word, color):
+        """右上角状态：一个小圆点 + 两个字。颜色就是状态本身。"""
+        try:
+            self.items["jybState"].Text = "● " + word
+        except Exception:
+            pass
+        self._paint("jybState", _text_qss(11, color))
+
     def say_r(self, text):
         try:
             self.items["jybInfo"].Text = text
         except Exception:
             pass
 
-    def say_result(self, text):
-        """任务结果行。跟状态行分开，状态刷新不会把它冲掉。"""
+    def say_result(self, text, tone="sub"):
+        """任务结果行。跟状态行分开，状态刷新不会把它冲掉。
+
+        tone：sub 灰（默认）/ accent（执行中）/ ok / err。
+        """
         try:
             self.items["jybResult"].Text = text
         except Exception:
             pass
+        color = {"accent": C_ACCENT, "ok": C_TEXT,
+                 "err": C_ERR}.get(tone, C_SUB)
+        self._paint("jybResult", _text_qss(11, color, 600 if tone == "accent" else 0))
 
     def _new_name(self):
         """面板上填的新草稿名；没有输入框或留空就返回空串（走自动命名）。
@@ -426,11 +665,19 @@ class Panel(object):
         return ["--name", n] if n else []
 
     # ---------- 按钮可用性 ----------
+    # 每个按钮的「身份」，禁用时按它重新上一套样式。用 :disabled 伪状态不保险：
+    # Fusion 的元素不一定是 QPushButton 类，类型选择器可能根本不命中。
+    KINDS = {"btnSend": "primary", "btnWrite": "secondary",
+             "btnLock": "ghost", "btnGc": "ghost", "btnRefresh": "ghost"}
+
     def _set_enabled(self, wid, on):
         try:
             self.items[wid].Enabled = bool(on)
         except Exception:
             pass
+        kind = self.KINDS.get(wid)
+        if kind:
+            self._paint(wid, _btn_qss(kind, bool(on)))
 
     def _on_send(self):
         """点「送入」时先过一道本地闸门。
@@ -577,16 +824,16 @@ class Panel(object):
         extra = rep.get("cache_extra_bytes")
         if free is None and extra is None:
             self._free_bytes = self._free_extra = 0
-            return "可清理：—"
+            return "可清理 —"
         free, extra = int(free or 0), int(extra or 0)
         self._free_bytes, self._free_extra = free, extra
         if not free and not extra:
-            return "可清理：无"
+            return "无可清理项"
         if not free:
-            return "可清理：可再生 %s" % human_bytes(extra)
+            return "可清理 %s（可再生）" % human_bytes(extra)
         if not extra:
-            return "可清理：%s" % human_bytes(free)
-        return "可清理：%s ＋ 可再生 %s" % (human_bytes(free), human_bytes(extra))
+            return "可清理 %s" % human_bytes(free)
+        return "可清理 %s · 可再生 %s" % (human_bytes(free), human_bytes(extra))
 
     def _apply(self, rep, err):
         if not rep:
@@ -602,10 +849,11 @@ class Panel(object):
             self._free_bytes = self._free_extra = 0
             self._edited = False
             try:
-                self.items["jybDraft"].Text = "当前草稿：—"
-                self.items["jybCache"].Text = "可清理：—"
+                self.items["jybDraft"].Text = "—"
+                self.items["jybCache"].Text = "可清理 —"
             except Exception:
                 pass
+            self.set_state("状态未知", C_ERR)
             return
         name = rep.get("draft") or ""
         jy = rep.get("jianying") or {}
@@ -618,37 +866,137 @@ class Panel(object):
         self._edit_text = rep.get("draft_edit_text") or ""
         self._open_text = rep.get("draft_opened_text") or ""
         try:
-            self.items["jybDraft"].Text = (
-                "当前草稿：%s%s" % (name, " · 已改" if self._edited else "")
-                if name else "当前草稿：—")
+            # 草稿名单独一行，前面不加「当前草稿：」—— 上面那行小字已经是标签了。
+            self.items["jybDraft"].Text = name or "—"
         except Exception:
             pass
         try:
             self.items["jybCache"].Text = self._cache_line(rep)
         except Exception:
             pass
+        # 状态词只占一行位置，所以只挑「现在该干什么」说，不复述草稿名。
         if not alive:
-            msg = "剪映没在运行。送入前请先启动剪映并打开目标草稿。"
+            word, tone = "未运行", C_DIM
+            msg = "剪映没在运行。先启动剪映，打开要处理的草稿。"
         elif not name:
-            msg = "剪映在运行，但没认出当前草稿：请在剪映里打开一份草稿，再点 ↻ 刷新。"
+            word, tone = "待识别", C_WARN
+            msg = "剪映在运行，但没认出当前草稿。在剪映里打开一份草稿，再点右下角「刷新」。"
         elif not opened:
-            msg = ("草稿「%s」：没检测到 .locked（可能已回到首页）。"
-                   "送入前请在剪映里重新打开它。" % name)
+            word, tone = "待打开", C_WARN
+            msg = "没检测到打开状态（可能已回到首页）。重新打开这份草稿再送入。"
         elif self._edited:
-            msg = ("草稿「%s」：打开之后又被编辑过（%s）。送入前请关掉重开一次 ——"
-                   "剪映内存里还是打开那一刻的版本。" % (name, self._edit_text or "时间未知"))
+            word, tone = "待重开", C_WARN
+            msg = ("打开之后又被编辑过（%s）。关掉重开一次再送入 ——"
+                   "只按 Ctrl+S 不够，剪映不会因此重读内存。" % (self._edit_text or "时间未知"))
         else:
-            msg = "草稿「%s」：已打开 · 就绪" % name
+            word, tone = "就绪", C_OK
+            msg = "已打开，可以送入。"
+        self.set_state(word, tone)
 
         last = rep.get("last_send") or {}
         if last:
             state = "已提交" if last.get("committed") else "未走完"
-            msg += ("\n上次送入：%s（%s，%s 段，%s）"
+            msg += ("\n上次送入：%s · %s · %s 段 · %s"
                     % (last.get("draft") or "?", last.get("at") or "?",
                        last.get("segments") or 0, state))
         self.say_r(msg)
         note("status: draft=%s alive=%s opened=%s last=%s"
              % (name or "-", alive, opened, last.get("at")))
+
+    # ---------- 兼容性自检 ----------
+    def _on_diag(self):
+        """收集「这版达芬奇缺什么」，显示成一段能直接复制的文字。
+
+        为什么要放在面板里：这个工具是要发给别人测的，出问题的人未必会开
+        终端跑命令。点一下、全选、复制、发回来 —— 就这些动作。
+
+        同样走后台线程：`compat` 要连达芬奇的脚本接口，慢起来几秒。
+        """
+        if self._diag_running:
+            self.say_result("正在收集兼容性信息…", tone="accent")
+            return
+        self._diag_running = True
+        self.say_result("正在收集兼容性信息…", tone="accent")
+
+        def work():
+            text = ""
+            try:
+                cmd, cwd = _cmd("compat")
+                r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                                   timeout=20, creationflags=NO_WIN,
+                                   encoding="utf-8", errors="replace", env=ENV)
+                text = (r.stdout or "").strip() or (r.stderr or "").strip()
+            except Exception as exc:
+                text = ("自检没有跑起来：%s: %s\n\n"
+                        "常见原因：安装目录被移动，或系统缺少运行库。"
+                        % (type(exc).__name__, exc))
+            self._diag_text = text or "自检没有输出。"
+            self._diag_running = False
+
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception as exc:
+            self._diag_running = False
+            self.say_result("起不了后台线程：%r" % (exc,), tone="err")
+
+    def poll_diag(self):
+        """主循环里贴自检结果（没有新结果就什么都不做）。"""
+        text = self._diag_text
+        if not text:
+            return
+        self._diag_text = ""
+        self.say_result("", tone="sub")
+        if not self._popup_compat(text):
+            self.say_result("自检结果：" + text.splitlines()[0][:60], tone="sub")
+
+    def _popup_compat(self, text):
+        """把自检结果放在一个可选中复制的框里。"""
+        self._close_popup()
+        self._dlg_seq += 1
+        wid = "jybCmp%d" % self._dlg_seq
+        ui, s_ = self.ui, self._S
+        props = {"ID": wid, "Geometry": [300, 200, 620, 400],
+                 "WindowTitle": "ColorPass · 兼容性自检"}
+        if getattr(self, "styled", True):
+            props["StyleSheet"] = "background-color:%s;" % C_BG
+        box_qss = _qss("color:%s;background-color:%s;border:1px solid %s;"
+                       "border-radius:8px;padding:6px;font-size:11px;"
+                       % (C_TEXT, C_FIELD, C_LINE))
+        ok = {"ID": "dOk", "Text": "关闭", "Weight": 0}
+        ok.update(self._box(30))
+        ok.update(s_(_btn_qss("secondary")))
+        try:
+            note_label = {"Text": "下面这一整段可以直接全选复制，发给开发者。",
+                          "Weight": 0}
+            note_label.update(s_(_text_qss(10, C_DIM)))
+            try:
+                box = ui.TextEdit({"ID": "dMsg", "Text": text, "ReadOnly": True,
+                                   **s_(box_qss)})
+            except Exception:
+                # 没有 TextEdit 的版本退回只读标签：不能复制，但至少看得见
+                box = ui.Label({"ID": "dMsg", "Text": text, "WordWrap": True,
+                                "Weight": 1, **s_(_text_qss(11, C_TEXT))})
+            dlg = self.disp.AddWindow(props, ui.VGroup([
+                ui.Label(note_label), ui.VGap(GAP), box, ui.VGap(GAP * 2),
+                ui.HGroup({"Weight": 0}, [ui.Label({"Text": "", "Weight": 1}),
+                                          ui.Button(ok)]),
+            ]))
+        except Exception as exc:
+            note("compat popup failed: %r" % (exc,))
+            return False
+        if dlg is None:
+            return False
+        try:
+            dlg.On.dOk.Clicked = lambda _ev: self._close_popup()
+            getattr(dlg.On, wid).Close = lambda _ev: self._close_popup()
+        except Exception:
+            note("compat popup wiring failed")
+        self._dlg = dlg
+        try:
+            dlg.Show()
+        except Exception:
+            return False
+        return True
 
     # ---------- 子进程任务 ----------
     def start_job(self, action, label, extra=None):
@@ -679,7 +1027,8 @@ class Panel(object):
                     "action": action, "file": f, "t0": time.time(),
                     "extra": list(extra or []),
                     "next_lock": (not self._lock_state) if action == "lock" else None}
-        self.say_result("%s：执行中…" % label)
+        self.say_result("%s · 执行中…" % label, tone="accent")
+        self.set_state("执行中", C_ACCENT)
         self._sync_buttons()
         note("job start %s pid=%s" % (action, proc.pid))
 
@@ -690,8 +1039,8 @@ class Panel(object):
         if j["proc"].poll() is None:
             el = time.time() - j["t0"]
             if el > 1.0:
-                self.say_result("%s：执行中… 已用 %.0f 秒（可关窗口中止）"
-                                % (j["label"], el))
+                self.say_result("%s · 执行中 %.0f 秒（可关窗口中止）"
+                                % (j["label"], el), tone="accent")
             return
         try:
             j["file"].close()
@@ -719,13 +1068,13 @@ class Panel(object):
             notes = self._notes(txt)
             if notes:
                 msg += "\n" + "\n".join(notes)
-            self.say_result(msg)
+            self.say_result(msg, tone="ok")
             if j["action"] == "gc" and not rep.get("count"):
                 # 默认策略没东西可收时，给一条「那就清可再生的」的出路，
                 # 否则用户只会看到「0 项」，以为按钮坏了。
                 self._popup_gc_empty(rep)
         else:
-            self.say_result("%s：没有完成（详见弹窗）" % j["label"])
+            self.say_result("%s · 没有完成（详见弹窗）" % j["label"], tone="err")
             self._popup_fail(j, rep, txt, code)
         self._sync_buttons()
         self.refresh_draft()
@@ -917,21 +1266,29 @@ class Panel(object):
         self._dlg_seq += 1
         wid = "jybDlg%d" % self._dlg_seq
         self._act = act
+        ui, s_ = self.ui, self._S
+        props = {"ID": wid, "Geometry": [280, 190, 600, height],
+                 "WindowTitle": "ColorPass · " + title}
+        if getattr(self, "styled", True):
+            props["StyleSheet"] = "background-color:%s;" % C_BG
+        msg = {"ID": "dMsg", "Text": body, "WordWrap": True, "Weight": 1}
+        msg.update(s_(_text_qss(12, C_TEXT)))
+        hint = {"ID": "dHint", "Text": "完整日志：%s" % LOG, "Weight": 1,
+                "WordWrap": True}
+        hint.update(s_(_text_qss(10, C_DIM)))
+        ok = {"ID": "dOk", "Text": "知道了", "Weight": 0}
+        ok.update(self._box(30))
+        ok.update(s_(_btn_qss("secondary")))
+        act = {"ID": "dAct", "Text": act_label, "Weight": 0}
+        act.update(self._box(30))
+        act.update(s_(_btn_qss("primary")))
         try:
             dlg = self.disp.AddWindow(
-                {"ID": wid, "Geometry": [280, 190, 620, height],
-                 "WindowTitle": "ColorPass · " + title},
-                self.ui.VGroup([
-                    self.ui.Label({"ID": "dMsg", "Text": body, "WordWrap": True,
-                                   "Weight": 1}),
-                    self.ui.HGroup({"Weight": 0}, [
-                        self.ui.Label({"ID": "dHint",
-                                       "Text": "完整日志：%s" % LOG,
-                                       "Weight": 1, "WordWrap": True}),
-                        self.ui.Button({"ID": "dAct", "Text": act_label,
-                                        "Weight": 0}),
-                        self.ui.Button({"ID": "dOk", "Text": "知道了", "Weight": 0}),
-                    ]),
+                props, ui.VGroup([
+                    ui.Label(msg),
+                    ui.VGap(GAP * 3),
+                    ui.HGroup({"Weight": 0}, [ui.Label(hint), ui.Button(ok),
+                                              ui.Button(act)]),
                 ]))
         except Exception as exc:
             note("popup failed: %r" % (exc,))
@@ -968,7 +1325,8 @@ class Panel(object):
                          act=lambda: self.start_job(action, label, extra=extra))
         if not ok:
             # 弹窗建不出来也不能什么都不说
-            self.say_result("%s失败：%s" % (j["label"], body.splitlines()[0][:80]))
+            self.say_result("%s · 失败：%s"
+                            % (j["label"], body.splitlines()[0][:80]), tone="err")
 
     def _popup_gc_empty(self, rep):
         """缓存清理没东西可收 —— 说明为什么，并给「清可再生的」这条出路。
@@ -1026,6 +1384,7 @@ class Panel(object):
             try:
                 self.apply_status()
                 self.poll_job()
+                self.poll_diag()
             except Exception:
                 note("step error:\n" + traceback.format_exc())
                 self.say_r("处理出错，详见 %s" % LOG)

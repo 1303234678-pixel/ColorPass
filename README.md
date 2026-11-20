@@ -35,8 +35,9 @@ ColorPass 是达芬奇的 Workflow Integration 插件，用于在剪映专业版
 新草稿（原剪辑结构 + 每段一条 LUT，可继续剪、可再调）
 ```
 
-面板上只有三个操作：① 送入达芬奇、② 写回剪映（基于送入时的快照）、锁定/解锁轨道。
-所有能力同时提供命令行入口，`check` / `plan` / `status` 不依赖达芬奇。
+面板上只有两个主操作：送入达芬奇、写回剪映（基于送入时的快照）。锁定轨道、清理缓存、
+刷新、兼容性诊断收在页脚，不参与主流程。所有能力同时提供命令行入口，
+`check` / `plan` / `status` / `compat` 不依赖达芬奇。
 
 ## 实现要点
 
@@ -143,6 +144,7 @@ colorpass pull                       # 达芬奇调色 → 逐段 33³ LUT
 colorpass write                      # LUT → 写回新草稿
 colorpass roundtrip                  # send + pull + write
 colorpass gc --apply                 # 回收可再生缓存（默认只报告）
+colorpass compat                     # 兼容性自检：这版达芬奇缺什么、各自影响什么
 colorpass doctor                     # 环境与兼容性报告（JSON，贴 issue 用）
 ```
 
@@ -159,6 +161,7 @@ colorpass/
 ├── draftio.py     草稿语义层：轨道 / 变速 / 转场 / 蒙版 / 复合片段 / 新鲜度
 ├── send.py        草稿 → 达芬奇：落轨计划、变速、停用段、marker
 ├── pull.py        达芬奇 → LUT：marker 身份锚 + ExportLUT
+├── compat.py      版本差异集中处理：能力探测 / 签名回退 / 常量兜底
 ├── doctor.py      环境与兼容性报告：平台 / 版本 / API 缺项（只读）
 ├── draftbuild.py  克隆草稿并追加 LUT 材质
 ├── write.py       写回编排 + 结构断言（structure_diff）
@@ -172,26 +175,53 @@ colorpass/
 
 ## 兼容性
 
-| 组件 | 实测版本 | 备注 |
+| 组件 | 状态 | 备注 |
 |---|---|---|
-| Windows | 10 / 11 | 完整链路；依赖 `%LOCALAPPDATA%` 与 `ReadProcessMemory` |
-| macOS | 未真机联调 | 数据目录、剪映路径、面板解释器、脚本模块搜索路径均已按 mac 取值，CI 在 `macos-latest` 上跑全量离线测试；仍缺「窗口级」草稿识别（见下） |
-| 剪映专业版 | 11.7.0 / 11.9 | 正文加密；字段行为见 [docs/剪映草稿字段.md](docs/剪映草稿字段.md) |
-| 达芬奇 | 18+（本地 20.x） | 需 Workflow Integration 支持；API 按 `hasattr` 判断，不按版本号 |
+| Windows 10 / 11 | 实测 | 完整链路；依赖 `%LOCALAPPDATA%` 与 `ReadProcessMemory` |
+| macOS | 未真机联调 | 数据目录、剪映路径、面板解释器、脚本模块搜索路径均已按 mac 取值，CI 在 `macos-latest` 跑全量离线测试；仍缺「窗口级」草稿识别 |
+| 剪映专业版 11.7 / 11.9 | 实测 | 正文加密；字段行为见 [docs/剪映草稿字段.md](docs/剪映草稿字段.md) |
+| 达芬奇 20.x | 实测全链路 | 20.3 上跑过完整往返 |
+| 达芬奇 18.x / 19.x | 按 API 增量推断 | 用假 API 面回归过降级路径（`tests/test_compat.py`），未在真机跑全链路 |
 | Python | 3.9+（开发与 CI 用 3.12） | 无第三方硬依赖 |
 
-**为什么不用版本号判断能力。** 达芬奇的脚本 API 是增量加的，同一个大版本内部
-也会有增删，所以代码里一律 `hasattr` 探测 + 降级（例如 `SetClipEnabled` 缺失时
-停用片段照常落轨，只在报告里标注未生效）。想知道某个组合上到底缺哪些方法，
-跑一次 `colorpass doctor`，看 `resolve.api.missing`。
+### 达芬奇版本差异怎么处理
 
-**没有的机器怎么验。** 兼容性不靠开发者凑齐所有硬件，而是靠三件事叠加：
+三条原则，都写在 `colorpass/compat.py` 里：
 
-1. **能探测的不写死** —— 缺方法的路径有降级、有报告，未测过的版本大多能直接跑通；
-2. **CI 覆盖平台差异** —— `windows-latest` 与 `macos-latest` 各跑一遍全量离线测试
-   （达芬奇装不进 CI，但平台分支全在纯 Python 这半边）；
-3. **用户回帖补矩阵** —— `colorpass doctor` 输出一份 JSON，含系统、达芬奇版本、
-   每个对象上缺哪几个方法、路径与实际加载到的脚本模块位置，贴进 issue 即可定位。
+1. **不按版本号判断，只探测能力。** `GetVersionString()` 只说明它自称是谁；
+   能不能干这件事，用 `hasattr` 问。同一大版本内部也会增删方法。
+2. **签名会变长，就容忍签名。** `AddMarker` 从 5 个参数涨到 6 个（多一个
+   customData），`AppendToTimeline` 的 `recordFrame` 也是后加的。参数从尾部逐级
+   回退调用 —— 但只对「尾部参数是可选装饰」的方法这么做，携带必需信息的参数
+   （比如片段标记里的段号）绝不静默丢弃。
+3. **常量会缺，就给兜底值。** LUT 导出类型在新版脚本模块里是
+   `EXPORT_LUT_33PTCUBE`，老版本只认字面量 `"33PTCube"`。
+
+缺能力不等于跑不起来，每种缺失都有确定行为：
+
+| 这版没有 | 行为 |
+|---|---|
+| `SetClipEnabled` | 停用段照常占位落轨，但会出画面；报告与面板都标注 |
+| `ExportLUT` | 写回中止并说明原因（这条缺失是致命的，不猜） |
+| `GetCurrentPage` / `OpenPage` | 不切调色页，LUT 照样导，只是慢一些 |
+| `DeleteTimelines` | 同名空时间线删不掉时换一个名字建 |
+| `CreateCompoundClip` | 复合片段拆成多轨落下，回剪映后不再是一个整体 |
+| `AddMarker` 只有 5 个参数 | 段号退到 note 位，写回照样认 |
+
+想看某台机器上到底缺哪些：跑 `colorpass compat`，或在面板页脚点「诊断」——
+后者会把结果摊在一个可全选复制的框里，适合直接发给开发者。`colorpass compat --json`
+给机器读，`colorpass doctor` 则是包含路径、进程、依赖的全量快照。
+
+### 没有的机器怎么验
+
+兼容性不靠开发者凑齐所有硬件，而是四件事叠加：
+
+1. **能探测的不写死** —— 缺方法的路径有降级、有报告；
+2. **签名与常量都兜底** —— 老版本的方法签名和缺失常量不再变成 traceback；
+3. **假 API 面回归** —— `tests/test_compat.py` 按版本增量造出 17 / 18 / 20 三套
+   API 面，断言「缺东西时降级而不是崩」，这部分在 CI 每次都会跑；
+4. **用户回帖补矩阵** —— `colorpass compat` 或面板「诊断」输出一段文本，含系统、
+   达芬奇版本、缺哪几项，贴进 issue 即可定位。
 
 剪映的加密与内存行为属内部实现，升级后可能变化；这类情况由 `docs/剪映草稿字段.md`
 中的版本矩阵记录，并以 issue 模板 `compat` 收集反馈。
@@ -235,7 +265,7 @@ python -m unittest discover -s tests -p "test_*.py"
 python -m ruff check colorpass tests --line-length 100
 ```
 
-330 个离线测试，不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
+离线测试不依赖达芬奇、不依赖剪映、不触碰任何真实草稿。CI 覆盖
 Ubuntu 静态检查、Windows 3.9 / 3.12 与 macOS 3.9 / 3.12 全量测试，
 并在无达芬奇的环境下跑一次 `colorpass doctor` 验证报告完整性。
 

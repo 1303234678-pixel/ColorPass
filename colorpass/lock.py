@@ -7,7 +7,7 @@
 import os
 import time
 
-from . import draftio, paths, resolve
+from . import compat, draftio, paths, resolve
 
 # 延迟加载：没装达芬奇的机器照样能 import 本模块（check / plan 不需要 API）。
 dvr = resolve.lazy()
@@ -52,7 +52,8 @@ def run(state="on"):
             if (v or {}).get("name") in ("ColorPass", "BRIDGE"):
                 tl.DeleteMarkerAtFrame(int(k))
                 break
-        tl.AddMarker(0, "Purple", "ColorPass", note_text, 1)
+        compat.call_shrink(tl.AddMarker, 0, "Purple",
+                           "ColorPass", note_text, 1)
         rep["note"] = note_text
     except Exception as e:
         rep["note_error"] = str(e)

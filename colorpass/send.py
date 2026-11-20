@@ -35,7 +35,7 @@ import os
 import time
 from pathlib import Path
 
-from . import draftio, paths, resolve
+from . import compat, draftio, paths, resolve
 
 # 延迟加载：没装达芬奇的机器照样能 import 本模块（check / plan 不需要 API）。
 dvr = resolve.lazy()
@@ -345,10 +345,20 @@ def create_timeline(mp, proj, base_name, max_try=6):
 
 
 def mark_item(it, sid):
+    """在片段上写段号。新版 6 参数（末位 customData），老版 5 参数。
+
+    老版没有 customData，就把段号写进 note —— pull 的 seg_marker() 两种都读。
+    """
     try:
         return bool(it.AddMarker(0, "Blue", paths.MARKER_NAME, "", 1, sid))
     except TypeError:
-        return bool(it.AddMarker(0, "Blue", paths.MARKER_NAME, sid))
+        pass
+    # 老版本只有 5 个参数，段号退到 note 位（seg_marker 两种都读）。
+    #
+    # 这里**故意不用 compat.call_shrink**：它会把末尾的 sid 当多余参数丢掉，
+    # 于是「调用成功、标记也写上了，但里面没有段号」——写回时整条链找不到
+    # 片段，还不报错。丢参数只有在「丢的是可选装饰」时才是安全的。
+    return bool(it.AddMarker(0, "Blue", paths.MARKER_NAME, sid, 1))
 
 
 def mark_disabled(placed):
@@ -892,7 +902,7 @@ def run(tag=paths.TIMELINE_TAG, allow_stale=False, speed_mode="slot"):
 
     rep["locks"] = set_locks(tl, True)
     try:
-        resolve.OpenPage("color")
+        compat.ensure_page("color")
         time.sleep(0.5)
     except Exception:
         pass

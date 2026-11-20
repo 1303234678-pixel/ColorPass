@@ -11,7 +11,7 @@ import os
 import time
 from pathlib import Path
 
-from . import draftio, paths, resolve
+from . import compat, draftio, paths, resolve
 
 # 延迟加载：没装达芬奇的机器照样能 import 本模块（check / plan 不需要 API）。
 dvr = resolve.lazy()
@@ -221,11 +221,14 @@ def run(draft_id=None):
         return rep
 
     try:
-        resolve.OpenPage("color")
+        compat.ensure_page("color")
         time.sleep(0.8)
     except Exception:
         pass
 
+    # LUT 导出类型：新版脚本模块给常量，老版只认字面量 "33PTCube"。
+    lut = compat.lut_type()
+    rep["lut_type"] = lut
     rows, seg_luts, problems, skipped_disabled = [], {}, [], []
     for (lane, rec), s in sorted(placed.items()):
         if not [x for x in s["items"] if x["kind"] == "main"]:
@@ -252,10 +255,10 @@ def run(draft_id=None):
         except Exception:
             pass
         dst = lut_dir / ("%s.cube" % sid)
-        ok = it.ExportLUT(resolve.EXPORT_LUT_33PTCUBE, str(dst))
+        ok = it.ExportLUT(lut, str(dst))
         if not ok or not dst.exists() or dst.stat().st_size == 0:
             time.sleep(0.3)
-            ok = it.ExportLUT(resolve.EXPORT_LUT_33PTCUBE, str(dst))
+            ok = it.ExportLUT(lut, str(dst))
         if not ok or not dst.exists() or dst.stat().st_size == 0:
             problems.append({"lane": lane, "rec": rec, "segment_id": sid,
                              "why": "ExportLUT 失败或产出空文件"})

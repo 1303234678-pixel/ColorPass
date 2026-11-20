@@ -528,6 +528,23 @@ def cmd_doctor(a):
     return doctor.main(["--compact"] if getattr(a, "compact", False) else [])
 
 
+def cmd_compat(a):
+    """兼容性自检。人读一行字，机器读 JSON。
+
+    与 doctor 的分工：doctor 是给排查用的全量快照（路径、进程、依赖），
+    compat 只回答一个问题 —— **这个版本的达芬奇，哪些能力有、哪些没有、
+    没有会怎样**。测试同学只要贴这一段就够定位版本问题。
+    """
+    from . import compat
+    rep = compat.report()
+    if getattr(a, "json", False):
+        print(json.dumps(rep, ensure_ascii=False, indent=1, default=str))
+    else:
+        print(compat.text_report())
+    # 缺致命能力才算失败；「没开达芬奇」不算 —— 那是环境状态，不是不兼容。
+    return 0 if rep.get("ok") or rep.get("state") == "unknown" else 5
+
+
 def main(argv=None):
     # 面板是 Popen 到文件的，Windows 下默认按 cp936 写，面板再按 utf-8 读就是
     # 一片「10��30��」的乱码。这里把三条标准流钉死成 utf-8，谁的父进程都一样。
@@ -615,6 +632,11 @@ def main(argv=None):
                         help="环境与兼容性报告：平台、达芬奇版本、API 缺项、路径（只读）")
     sp.add_argument("--compact", action="store_true", help="单行 JSON，便于贴进 issue")
     sp.set_defaults(fn=cmd_doctor)
+
+    sp = sub.add_parser("compat",
+                        help="兼容性自检：这版达芬奇缺哪几个 API、各自影响什么（只读）")
+    sp.add_argument("--json", action="store_true", help="输出 JSON（默认是人读的多行文本）")
+    sp.set_defaults(fn=cmd_compat)
 
     a = p.parse_args(argv)
     if not getattr(a, "fn", None):

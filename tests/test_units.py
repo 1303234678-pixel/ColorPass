@@ -1695,7 +1695,22 @@ class TestResolveLazy(unittest.TestCase):
         self.assertIn("ok", out.stdout)
 
     def test_loud_error_when_api_missing(self):
+        """模拟「这台机器没有脚本模块」。
+
+        只清 MOD_DIRS 不够：`load()` 成功过一次就把那些目录塞进了 sys.path、
+        把模块留在 sys.modules 里。同进程后续再清 MOD_DIRS，`import` 照样命中
+        缓存 —— 这条用例就会因为「前面别的测试先加载过」而假通过或假失败
+        （加了 compat 自检之后真的踩到了）。所以要连 sys.path 和 sys.modules
+        一起还原。
+        """
+        import sys
         saved_dirs, saved = resolve.MOD_DIRS, resolve._loaded
+        saved_path = list(sys.path)
+        saved_mod = sys.modules.pop("DaVinciResolveScript", None)
+        # sys.path 里可能早就被别的用例塞进了脚本模块目录，也要临时拿掉，
+        # 否则 import 照样命中真实安装 —— 这条用例就成了「看执行顺序」。
+        sys.path[:] = [p for p in sys.path
+                       if "Scripting" not in p and "Resolve" not in p]
         resolve.MOD_DIRS, resolve._loaded = (), None
         try:
             with self.assertRaises(resolve.ResolveUnavailable) as ctx:
@@ -1703,6 +1718,9 @@ class TestResolveLazy(unittest.TestCase):
             self.assertIn("check", str(ctx.exception))     # 告诉人哪些命令不受影响
         finally:
             resolve.MOD_DIRS, resolve._loaded = saved_dirs, saved
+            sys.path[:] = saved_path
+            if saved_mod is not None:
+                sys.modules["DaVinciResolveScript"] = saved_mod
 
     def test_proxy_is_patchable_without_resolve(self):
         """测试里 patch `send.dvr.scriptapp` 不能反过来要求先装达芬奇。"""
