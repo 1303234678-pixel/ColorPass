@@ -1,0 +1,20 @@
+* text=auto
+
+# 源码按 LF 存。Windows 上如果让 git 自动转 CRLF，测试里比对字符串
+# （stdout JSON、生成的文件内容）会出现只在 CI 上失败的情况。
+*.py text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.cube text eol=lf
+
+# shell 脚本必须是 LF：CRLF 在 macOS 上会让 bash 报 syntax error
+*.sh text eol=lf
+
+# 编译产物按二进制存（不让 git 做任何转换）
+*.dylib binary
+
+# 双击安装脚本同样是 LF，理由同上
+*.command text eol=lf

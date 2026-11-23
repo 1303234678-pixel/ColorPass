@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ruff
+      - run: python -m ruff check colorpass tests --line-length 100
+
+  test-windows:
+    # Windows 是主战场：内存扫描、窗口枚举、tasklist 这些只在 Windows 上真跑。
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Test
+        # 不要加 -s tests：那样 unittest 会把 tests 当顶层目录、以 test_xxx 的名字
+        # 导入，tests 包的 __init__ 不执行 —— macOS 上「按 Windows 语义跑纯逻辑
+        # 用例」那段保护就落不到实处（历史上 CI 在 mac 上红了 18 次就是这个原因）。
+        run: python -m unittest discover -p "test_*.py"
+      - name: Doctor (offline)
+        # 没有达芬奇、没有剪映，报告必须照样出得来 —— mac 用户回帖靠的就是
+        # 这条路径，所以每个平台都跑一遍，顺便验它不会因为缺东西抛异常。
+        run: python -m colorpass.cli doctor --compact
+
+  test-macos:
+    # 公开仓库的 macOS runner 不花钱。达芬奇装不进 CI（许可 + GUI），但
+    # 平台相关的代码都在纯 Python 这半边：数据目录、剪映路径、面板解释器
+    # 探测、脚本模块的三个平台搜索路径、doctor —— 这些跑得过，就说明
+    # 「mac 上不会一 import 就炸」；剩下的只是真机联调。
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Test
+        # 同上：macOS 上绝大多数用例验的是 Windows 读取链路，平台判定由
+        # tests/__init__.py 统一拨到 Windows 语义；测试进程里不会真的去连剪映。
+        run: python -m unittest discover -p "test_*.py"
+      - name: Doctor (offline)
+        run: python -m colorpass.cli doctor --compact

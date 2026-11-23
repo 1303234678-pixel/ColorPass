@@ -1,0 +1,537 @@
+"""达芬奇 → 剪映：逐段 ExportLUT，按 marker 里的 segment_id 归位。
+
+与上一版的差别（都是为了「cube 不丢」）：
+  1. cube 落到 %LOCALAPPDATA%\\ColorPass\\luts\\<草稿ID>\\，不再是会话工作区
+  2. 每个 cube 导出后立即校验：文件存在、33³、非空、对角线可读
+  3. 写 manifest.json（段号→文件→字节数→白点），写回时按它对账
+  4. 对齐校验不通过就不导（沿用：宁可不写，也不挂错段）
+"""
+import json
+import os
+import shutil
+import time
+from pathlib import Path
+
+from . import compat, draftio, paths, resolve
+
+# 延迟加载：没装达芬奇的机器照样能 import 本模块（check / plan 不需要 API）。
+dvr = resolve.lazy()
+
+PAD = paths.PAD_SUFFIX
+# 以前这里内置了几个「已知被调过色」的测试段 ID，用来把恒等校验放过去。
+# 那是排错期的临时补丁：换一份草稿就全错位，而且会把真问题藏起来。
+# 现在恒等偏差只作参考量（谁都别拿它当闸门），不再需要白名单。
+GRADED_DEV = 1.0          # 对角偏离超过 1 码就认为这一段确实被调过色
+
+
+def load_cube(path):
+    size, data = None, []
+    for line in Path(path).read_text(encoding="utf-8", errors="ignore").splitlines():
+        # BOM / 全角空格：真实 cube 里有厂商会写 BOM，不去掉的话第一行
+        # 「\ufeffLUT_3D_SIZE 33」解析不出 size，整份 cube 被判成不完整。
+        s = line.strip().lstrip("\ufeff").strip()
+        if not s or s.startswith("#"):
+            continue
+        u = s.upper()
+        if u.startswith("LUT_3D_SIZE"):
+            size = int(s.split()[-1])
+        elif u.startswith(("TITLE", "DOMAIN_")):
+            continue
+        else:
+            try:
+                data.append(tuple(float(x) for x in s.split()[:3]))
+            except ValueError:
+                pass
+    return size, data
+
+
+def at(data, n, r, g, b):
+    return data[r + g * n + b * n * n]
+
+
+def warm_timeline(proj, tries=15):
+    tl, last = None, 0
+    for _ in range(tries):
+        tl = proj.GetCurrentTimeline()
+        if tl:
+            last = tl.GetTrackCount("video") or 0
+            if last > 0 and (tl.GetItemListInTrack("video", 1) or []):
+                return tl
+        time.sleep(0.4)
+    print("!! 预热失败，最后一次 V 轨数 =", last)
+    return tl
+
+
+def seg_marker(it):
+    sid = None
+    for _, v in (it.GetMarkers() or {}).items():
+        c = (v or {}).get("customData")
+        if c:
+            sid = c
+    return sid
+
+
+def is_disabled(it):
+    """这段在达芬奇里是不是被禁用了（对应剪映的「停用片段」）。
+
+    老版本 Resolve 没有 GetClipEnabled：探测失败一律当启用，不能因为一句
+    探测没过去就把片段从取色里漏掉。用 `compat.alive` 而不是 hasattr ——
+    21.2 的绑定对不存在的方法也返回 True（getattr 是 None）。
+    """
+    try:
+        if not compat.alive(it, "GetClipEnabled"):
+            return False
+        return it.GetClipEnabled() is False
+    except Exception:
+        return False
+
+
+def _chain(want, lane, start, end):
+    """从 start 到 end 正好由计划里的连续段拼起来，返回这些段；否则 None。
+
+    多机位/复合片段在时间线上是**一个** item，覆盖原本的好几段。只能靠
+    「起点对齐 + 终点对齐 + 中间无缝」来认，不能靠名字（用户会改名）。
+    """
+    segs, cur = [], start
+    guard = 0
+    while cur < end:
+        s = want.get((lane, cur))
+        if s is None or (s.get("dur") or 0) <= 0:
+            return None
+        segs.append(s)
+        cur += s["dur"]
+        guard += 1
+        if guard > 10000:          # 防御：坏计划里 dur=0 会死循环
+            return None
+    return segs if cur == end else None
+
+
+def verify_alignment(tl, plan, base):
+    """核对时间线是否还是送入时那一条。返回 (issues, placed)。
+
+    两遍匹配：
+      1. 有身份标记（段号）的，按标记 + 位置严格核对 —— 这是主路径。
+      2. 没标记的，只在「完全覆盖一段或连续几段」时接受，并记为 coverage。
+         单段且不像多机位的仍然拒绝：那更可能是用户新插入的片段，给它挂
+         LUT 就是挂错画面。
+
+    为什么要有第 2 遍：在达芬奇里把几段合成为多机位/复合片段之后，原来的
+    marker 随旧 item 一起没了。老逻辑会判「没有身份标记」并整条拒绝导出，
+    用户看到的是「写回失败」，却不知道只是因为他做了多机位。位置仍然逐帧
+    对得上，所以可以用「完全覆盖」当第二身份 —— 但必须是**完全**覆盖，
+    差一帧都不认。
+    """
+    issues, placed = [], {}
+    want = {(s["lane"], s["rec"]): s for s in plan["segments"]}
+    # 尾巴段（PAD）要找回主段。第一遍是按位置边扫边填 placed，用反向索引
+    # 跟着维护：段号 → placed 的键。原先每个尾巴段都遍历一遍 placed，
+    # 2000 段要 140 ms 且随段数平方增长，纯属白花。
+    by_sid = {}
+
+    for lane in range(1, (tl.GetTrackCount("video") or 0) + 1):
+        items = sorted((tl.GetItemListInTrack("video", lane) or []),
+                       key=lambda x: x.GetStart())
+        loose = []
+        # ---- 第一遍：有段号的
+        for it in items:
+            sid = seg_marker(it)
+            st = it.GetStart() - base
+            dur = it.GetDuration()
+            if not sid:
+                loose.append(it)
+                continue
+            if sid.endswith(PAD):
+                main_id = sid[:-len(PAD)]
+                target = by_sid.get((lane, main_id))
+                if target is None:
+                    issues.append({"lane": lane, "start": st, "segment_id": sid,
+                                   "why": "尾巴段找不到对应主段"})
+                else:
+                    placed[target]["items"].append(
+                        {"start": st, "dur": dur, "kind": "pad", "obj": it})
+                    placed[target]["total"] += dur
+                continue
+            s = want.get((lane, st))
+            if s is None or s["segment_id"] != sid:
+                issues.append({"lane": lane, "start": st, "segment_id": sid,
+                               "why": "位置与计划不符（片段被移动/替换）"})
+                continue
+            ent = placed.setdefault((lane, st), {"segment_id": sid,
+                                                 "items": [], "total": 0})
+            by_sid[(lane, sid)] = (lane, st)
+            ent["items"].append({"start": st, "dur": dur, "kind": "main",
+                                 "obj": it})
+            ent["total"] += dur
+
+        # ---- 第二遍：没段号的，看它是不是完整盖住了连续几段
+        for it in loose:
+            st = it.GetStart() - base
+            dur = it.GetDuration()
+            end = st + dur
+            segs = _chain(want, lane, st, end)
+            kind = compat.item_kind(it)
+            if segs is None:
+                issues.append({"lane": lane, "start": st,
+                               "why": "片段上没有身份标记，位置也对不上"
+                                      "计划里的段"})
+                continue
+            if len(segs) == 1 and not kind["multicam"]:
+                # 单段又不像多机位：多半是新插入的片段。保持严格。
+                issues.append({"lane": lane, "start": st,
+                               "why": "片段上没有身份标记（可能是新插入的片段）"})
+                continue
+            hit = [k for k in ((lane, s["rec"]) for s in segs) if k in placed]
+            if hit:
+                issues.append({"lane": lane, "start": st,
+                               "why": "%d 段合并后的片段与已识别的片段重叠"
+                                      % len(segs)})
+                continue
+            cov = {"lane": lane, "start": st, "dur": dur,
+                   "count": len(segs),
+                   "segments": [s["segment_id"] for s in segs],
+                   "multicam": kind["multicam"], "evidence": kind["why"],
+                   "type": kind["type"], "name": it.GetName()}
+            for s in segs:
+                placed[(lane, s["rec"])] = {
+                    "segment_id": s["segment_id"],
+                    "items": [{"start": st, "dur": dur, "kind": "coverage",
+                               "obj": it, "shared": True}],
+                    "total": s["dur"],
+                    "coverage": cov,
+                }
+
+    for (lane, rec), s in sorted(want.items()):
+        got = placed.get((lane, rec))
+        if got is None:
+            issues.append({"lane": lane, "rec": rec, "segment_id": s["segment_id"],
+                           "why": "计划中的片段不存在了（被删除或移位）"})
+        elif got["total"] != s["dur"]:
+            issues.append({"lane": lane, "rec": rec, "segment_id": s["segment_id"],
+                           "want": s["dur"], "got": got["total"],
+                           "why": "该段占用时长变了"})
+    if plan.get("timeline") and tl.GetName() != plan["timeline"]:
+        issues.append({"why": "当前时间线不是计划里的那条",
+                       "want": plan["timeline"], "got": tl.GetName()})
+    return issues, placed
+
+
+def coverage_groups(placed):
+    """从 placed 里提取「一个片段盖住多段」的组（去重，按 lane/start 排序）。
+
+    不另开返回值：placed 的键是 (lane, rec)，混进别的类型会让
+    `sorted(placed.items())` 直接 TypeError。调用方按需提取即可。
+    """
+    seen, out = set(), []
+    for key, ent in placed.items():
+        cov = ent.get("coverage") if isinstance(ent, dict) else None
+        if not cov:
+            continue
+        ident = (cov["lane"], cov["start"])
+        if ident in seen:
+            continue
+        seen.add(ident)
+        out.append(cov)
+    return sorted(out, key=lambda c: (c["lane"], c["start"]))
+
+
+def measure_cube(path):
+    """读一份导出的 cube，给出「调没调过」的判断依据；不完整返回 None。"""
+    size, data = load_cube(path)
+    if size != 33 or len(data) != 33 ** 3:
+        return None
+    devs = []
+    for v in (0, 16, 128, 235, 255):
+        gi = int(round(v / 255.0 * 32))
+        o = at(data, 33, gi, gi, gi)
+        exp = gi / 32.0
+        devs += [abs(o[0] - exp) * 255, abs(o[1] - exp) * 255,
+                 abs(o[2] - exp) * 255]
+    corner = at(data, 33, 32, 32, 32)
+    return {"size": size, "n": len(data), "dev_max": round(max(devs), 2),
+            "white_rgb": [round(x * 255, 1) for x in corner]}
+
+
+def run(draft_id=None):
+    """导出 LUT。
+
+    上下文来自「最近一次完整送入」（current.json + snapshot），**不再读剪映
+    的内存**：送入之后你在剪映里怎么改都不影响这一步，导出的永远是达芬奇里
+    那条时间线（= 送入时的剪辑版本）的调色。
+    """
+    from . import snapshot
+    rep = {"ok": False, "action": "pull"}
+    ok, why = compat.version_ok()
+    if ok is False:
+        rep["error"] = why
+        return rep
+    ptr = snapshot.current()
+    if ptr is None:
+        rep["error"] = ("还没有完成过一次「送入达芬奇」。正常流程是："
+                        "送入达芬奇 → 在达芬奇里调色 → 写回剪映。")
+        return rep
+    if ptr.get("_incomplete"):
+        # need_reset 是给面板看的：面板里没有终端，让用户「执行 colorpass reset」
+        # 等于让他去敲一条他敲不了的命令。面板见到这个标记就把弹窗的动作按钮
+        # 换成「重置这次送入」，一键回到上一次成功的版本。
+        rep["need_reset"] = True
+        rep["error"] = ("最近一次「送入达芬奇」没有走完（%s 开始，时间线可能只摆了"
+                        "一半），取回会得到不完整的 LUT 表。\n\n"
+                        "两条路：重新送一次；或者丢掉这次没走完的记录，"
+                        "按上一次成功的版本继续。"
+                        % (ptr.get("pending_at") or "上一轮"))
+        return rep
+    did = ptr.get("draft_id")
+    run_dir = ptr.get("run_dir") or paths.draft_run_dir(did)
+    lut_dir = Path(paths.draft_lut_dir(did))
+    rep["draft"] = ptr.get("draft_name")
+    rep["draft_id"] = did
+    rep["snapshot_at"] = ptr.get("snapshot_at")
+    rep["sent_timeline"] = ptr.get("timeline")
+
+    plan_path = os.path.join(run_dir, "plan.json")
+    if not os.path.exists(plan_path):
+        rep["error"] = "缺少 plan.json，先执行「送入达芬奇」"
+        draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
+        return rep
+    plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+    # 记下这份 pull 对的是哪一版计划。写回默认会自动重新取回，但在 -no-pull
+    # 排错模式下靠它判断「这份 pull.json 是不是上一版留下的」。
+    import hashlib
+    rep["plan_sha"] = hashlib.sha1(
+        Path(plan_path).read_bytes()).hexdigest()[:16]
+    if str(plan.get("draft_id") or "") != str(did):
+        rep["error"] = ("plan.json 属于另一份草稿（%s），当前是 %s。"
+                        "请先重新送入。" % (plan.get("draft_id"), did))
+        draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
+        return rep
+
+    resolve = dvr.scriptapp("Resolve")
+    page = None
+    try:
+        page = resolve.GetCurrentPage()
+    except Exception:
+        pass
+    if not page:
+        rep["error"] = ("达芬奇停在项目管理器，还没进入工程。请在达芬奇里打开"
+                        "送入时用的那个工程（里面有时间线「%s」），再取回。"
+                        % (ptr.get("timeline") or "?"))
+        draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
+        return rep
+    proj = resolve.GetProjectManager().GetCurrentProject()
+    # 渲染队列在跑的时候 ExportLUT 会莫名其妙返回 False（引擎在解码占着），
+    # 表现出来和「这版不能导 LUT」一模一样。先问一句，省得用户去查兼容性。
+    if compat.rendering(proj):
+        rep["error"] = ("达芬奇正在渲染交付，取色会读到半截或直接失败。"
+                        "等渲染跑完（或先在交付页停掉）再取回。")
+        draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
+        return rep
+    tl = warm_timeline(proj)
+    if tl is None:
+        # 写回会自动走这里：用户可能还没送入，或者达芬奇停在一个空工程上。
+        rep["error"] = ("达芬奇里没有当前时间线。请先点「送入达芬奇」把剪映"
+                        "的剪辑送进去，再到面板里写回。")
+        draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
+        return rep
+    rep["timeline"] = tl.GetName() if tl else None
+    want_tl = ptr.get("timeline")
+    if want_tl and rep["timeline"] != want_tl:
+        rep["error"] = ("达芬奇当前时间线是「%s」，不是最近一次送入的「%s」。"
+                        "LUT 只对得上那条，请切回去（或重新送入）。"
+                        % (rep["timeline"], want_tl))
+        draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
+        return rep
+    rep["color_science"] = proj.GetSetting("colorScience")
+    rep["timeline_space"] = proj.GetSetting("colorSpaceTimeline")
+    rep["timeline_gamma"] = proj.GetSetting("timelineGamma")
+    base = int(plan.get("start_frame") or 0)
+
+    # 工程身份核对：同名时间线在别的工程里完全可能存在，名字对得上不代表
+    # 调色是这一份。旧版 plan.json 没有 project_uid，取不到就跳过（不阻断）。
+    want_uid = str(plan.get("project_uid") or "")
+    got_uid = compat.project_id(proj)
+    rep["project"] = compat.call_if(proj, "GetName") or ""
+    if want_uid and got_uid and want_uid != got_uid:
+        rep["error"] = ("达芬奇现在开的是另一个工程（送入时是「%s」）。"
+                        "同名时间线在别的工程里可能也存在，取色会挂错段。"
+                        "请打开送入时那个工程再取回。"
+                        % (plan.get("project") or "?"))
+        draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
+        return rep
+
+    issues, placed = verify_alignment(tl, plan, base)
+    rep["alignment_ok"] = not issues
+    rep["issues"] = issues
+    rep["aligned_segments"] = len(placed)
+    if issues:
+        rep["error"] = "时间线与计划不一致，已中止，未导出任何 cube"
+        draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
+        return rep
+
+    page_ok = False
+    try:
+        # 调色页首次打开要几秒。OpenPage 返回 True 只代表请求被接受，页面没
+        # 真正就绪时 ExportLUT 会返回 False —— 看起来像「这版不能导 LUT」。
+        page_ok = compat.ensure_page("color", wait=10.0)
+        time.sleep(0.5)
+    except Exception:
+        pass
+    rep["color_page"] = page_ok
+
+    # LUT 导出类型：21.2 认整数枚举（2=33pt），字符串 "33PTCube" 返回 False
+    # 且不建文件。仍然留一次字符串重试：万一某台机器只认字面量，不至于整条
+    # 链路失败，报告里会记下最后生效的那个值。
+    lut = compat.lut_type(app=resolve)
+    lut_cands = [lut] if lut == "33PTCube" else [lut, "33PTCube"]
+    rep["lut_type"] = lut
+    lut_used = None
+    rows, seg_luts, problems, skipped_disabled = [], {}, [], []
+    # 同一个片段盖住多段（多机位/合并片段）时只导出一次，其余段复制同一份
+    # cube：达芬奇里那本来就是一个调色，复制成多份只是为了让每段在写回时
+    # 有自己名字的文件，报告和 manifest 都能一段一行对得上。
+    exported = {}
+    total_seg = len(placed)
+    draftio.prog("取回调色：逐段导出 LUT（%d 段）" % total_seg)
+    for idx, ((lane, rec), s) in enumerate(sorted(placed.items()), 1):
+        # 每段都报太吵，500 段就是 500 行；均匀取 20 个点，够看出「在动」。
+        if total_seg >= 8 and (idx == 1 or idx % max(1, total_seg // 20) == 0
+                               or idx == total_seg):
+            draftio.prog("取回 LUT %d/%d" % (idx, total_seg))
+        mains = [x for x in s["items"] if x["kind"] in ("main", "coverage")]
+        if not mains:
+            problems.append({"lane": lane, "rec": rec, "why": "该段没有主片段"})
+            continue
+        it = mains[0].get("obj")
+        if it is None:                 # 外部构造的 placed 没有 obj：按位置找
+            for cand in (tl.GetItemListInTrack("video", lane) or []):
+                if cand.GetStart() - base == rec:
+                    it = cand
+                    break
+        if it is None:
+            problems.append({"lane": lane, "rec": rec, "why": "取不到片段对象"})
+            continue
+        sid = s["segment_id"]
+        cov = s.get("coverage")
+        # 剪映里停用的段，在达芬奇里也是禁用片段：用户看不见它，就不会去调它。
+        # 给它导一版 LUT 再写回，等于往停用段里塞一个恒等 cube —— 一旦用户
+        # 在剪映里取消停用，画面会莫名其妙多一层处理。所以直接跳过。
+        try:
+            if is_disabled(it):
+                skipped_disabled.append({"lane": lane, "rec": rec,
+                                         "segment_id": sid,
+                                         "name": it.GetName()})
+                continue
+        except Exception:
+            pass
+        prev = exported.get(id(it)) if cov else None
+        dst = lut_dir / ("%s.cube" % sid)
+        if prev is not None:
+            try:
+                shutil.copyfile(prev["cube"], str(dst))
+            except Exception as exc:
+                problems.append({"segment_id": sid,
+                                 "why": "共享 LUT 复制失败：%s" % str(exc)[:80]})
+                continue
+            rows.append({
+                "track": lane, "start": rec, "name": it.GetName(),
+                "segment_id": sid, "cube": str(dst),
+                "bytes": dst.stat().st_size,
+                "graded": prev["graded"],
+                "identity_dev_max": prev["identity_dev_max"],
+                "white_rgb": prev["white_rgb"],
+                "shared_with": prev["segment_id"],
+            })
+            seg_luts[sid] = str(dst)
+            continue
+
+        ok, err = False, ""
+        # 前两版只重试一次、间隔 0.3 秒。真机上多机位/复合片段第一次导出常常
+        # 还没就绪（调色页切过去、节点图建立都需要时间），于是整条报告成
+        # 「ExportLUT 失败」，用户以为这版不支持。给足三次、递增等待。
+        for attempt in range(3):
+            kind = lut_cands[min(attempt, len(lut_cands) - 1)]
+            try:
+                ok = bool(it.ExportLUT(kind, str(dst)))
+                err = ""
+            except Exception as exc:
+                ok, err = False, "%s: %s" % (type(exc).__name__, str(exc)[:80])
+            if ok and dst.exists() and dst.stat().st_size > 0:
+                lut_used = kind
+                break
+            if attempt < 2:
+                time.sleep(0.4 * (attempt + 1))
+        if not ok or not dst.exists() or dst.stat().st_size == 0:
+            problems.append({"lane": lane, "rec": rec, "segment_id": sid,
+                             "why": "ExportLUT 失败或产出空文件",
+                             "page_ok": page_ok,
+                             "returned": ok, "error": err,
+                             "multicam": bool(cov and cov["multicam"])})
+            continue
+        m = measure_cube(dst)
+        if m is None:
+            problems.append({"segment_id": sid,
+                             "why": "cube 不完整 size/n 不对"})
+            continue
+        row = {
+            "track": lane, "start": rec, "name": it.GetName(),
+            "segment_id": sid, "cube": str(dst),
+            "bytes": dst.stat().st_size,
+            # 「调过色」由导出结果自己说话：偏离恒等就是调过。
+            "graded": m["dev_max"] > GRADED_DEV,
+            "identity_dev_max": m["dev_max"],
+            "white_rgb": m["white_rgb"],
+        }
+        if cov:
+            row["covers"] = cov["count"]
+            row["multicam"] = cov["multicam"]
+        rows.append(row)
+        seg_luts[sid] = str(dst)
+        if cov:
+            exported[id(it)] = row
+
+    cov_groups = coverage_groups(placed)
+    rep["lut_type_used"] = lut_used
+    cov_segments = sum(c["count"] for c in cov_groups)
+    rep["coverage"] = cov_groups
+    rep["coverage_segments"] = cov_segments
+    rep["multicam_groups"] = len([c for c in cov_groups if c["multicam"]])
+    if cov_groups:
+        # 不阻断，但必须说清楚：多机位的角度切换不会回传 —— 剪映侧没有
+        # 「角度」这个概念，能带回去的只有整个多机位片段的调色。
+        rep["coverage_note"] = (
+            "%d 个片段合并覆盖了 %d 段（其中多机位 %d 个）：这些段共用同一份"
+            "调色。多机位内部的机位切换不会回传剪映。"
+            % (len(cov_groups), cov_segments, rep["multicam_groups"]))
+
+    worst = max((r["identity_dev_max"] for r in rows), default=0.0)
+    graded_n = len([r for r in rows if r["graded"]])
+    rep.update({
+        "count": len(rows),
+        "items": rows,
+        "problems": problems,
+        "identity_dev_max": round(worst, 2),
+        # identity_* 全是参考量，不是闸门：
+        #   identity_dev_max 全片最大的对角偏离（越大说明调得越狠）
+        #   identity_ok      整条时间线都没动过色（worst ≤ 1 码）
+        #   identity_graded  确实被调过色的段数
+        # 决定能不能写回的是对齐校验（alignment_ok）：轨道/起点/身份标记都对得上，
+        # LUT 就不可能挂错段。拿「有没有调色」当失败条件，等于让工具拒绝干活。
+        "identity_ok": worst <= GRADED_DEV,
+        "identity_graded": graded_n,
+        "lut_dir": str(lut_dir),
+        "segment_luts": seg_luts,
+        "disabled_skipped": skipped_disabled,
+    })
+    draftio.dump_json({
+        "draft_id": did, "draft_name": ptr.get("draft_name"),
+        "timeline": tl.GetName(), "lut_dir": str(lut_dir),
+        "count": len(rows),
+        "cubes": [{"segment_id": r["segment_id"], "file": r["cube"],
+                   "bytes": r["bytes"], "white_rgb": r["white_rgb"]}
+                  for r in rows],
+    }, os.path.join(run_dir, "manifest.json"))
+    rep["ok"] = bool(not problems and (rows or skipped_disabled))
+    if problems and not rep.get("error"):
+        rep["error"] = ("%d 段没能导出 LUT：%s"
+                        % (len(problems), problems[0].get("why") or "原因未知"))
+    draftio.dump_json(rep, os.path.join(run_dir, "pull.json"))
+    return rep

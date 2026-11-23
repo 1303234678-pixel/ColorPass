@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# 本地环境
+.venv/
+venv/
+env/
+
+# 工具缓存
+.ruff_cache/
+.vulture_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 内部资料（不随仓库发布）
+docs/_internal/
+
+# 本地产物（不要提交真实草稿、快照或导出的 LUT）
+out/
+runs/
+_mem/
+*.cube
+!tests/**/*.cube
+*.log
+
+# 随安装包自带的 ffmpeg：105 MB 的二进制，进不了 Git（单文件上限 100 MB），
+# 构建时由 tools/fetch_ffmpeg.py 自动补。manifest.json 记着版本和校验值，要提交。
+vendor/ffmpeg/*
+!vendor/ffmpeg/manifest.json
+!vendor/ffmpeg/README.md

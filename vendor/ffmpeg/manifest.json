@@ -1,0 +1,18 @@
+{
+ "exe": "ffmpeg.exe",
+ "bytes": 105423872,
+ "sha256": "3256173f3f8bffd7df12227c68adf68025edb1832273a9530688a7bb1ed8edec",
+ "version": "9.0.2-essentials_build-www.gyan.dev",
+ "source": "C:\\Users\\13032\\WorkBuddy-Multi\\WorkBuddy-2\\home\\binaries\\python\\versions\\3.13.12\\Lib\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v9.0.2.exe",
+ "need": {
+  "encoders": [
+   "prores_ks",
+   "libx264"
+  ],
+  "filters": [
+   "atempo",
+   "setpts"
+  ]
+ },
+ "note": "二进制不进 Git（>50 MB）；重新拉取运行 python tools/fetch_ffmpeg.py"
+}

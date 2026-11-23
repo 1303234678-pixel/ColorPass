@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "colorpass"
+dynamic = ["version"]
+description = "剪映 ⇄ 达芬奇：读加密草稿、按绝对帧落轨、把调色以 33³ LUT 回传并写回可继续编辑的草稿"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "ColorPass contributors" }]
+keywords = ["jianying", "capcut", "davinci-resolve", "draft", "lut", "roundtrip"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Win32 (MS Windows)",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Video :: Non-Linear Editor",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# 封面图（剪映草稿列表里的缩略图）。没有也能跑，只是列表里显示空白。
+cover = ["pillow>=9"]
+# 源码模式下的 ffmpeg 兜底。安装包自带二进制（bin\ffmpeg\ffmpeg.exe），
+# 用户不需要装任何东西；只有直接跑源码又没跑 tools/fetch_ffmpeg.py 时才靠这一项。
+ffmpeg = ["imageio-ffmpeg>=0.4"]
+# CI 也装 imageio-ffmpeg：否则变速预渲染那 7 条用例在 CI 上被 skip，
+# 「本地过、CI 过」但实际没测过真正的转码路径。
+dev = ["ruff>=0.5", "vulture>=2.11", "imageio-ffmpeg>=0.4"]
+
+[project.scripts]
+colorpass = "colorpass.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/1303234678-pixel/ColorPass"
+Issues = "https://github.com/1303234678-pixel/ColorPass/issues"
+
+[tool.setuptools.packages.find]
+include = ["colorpass*"]
+
+# 版本号只有一处：colorpass/__init__.py。发布时改那里，别再两处对不上。
+[tool.setuptools.dynamic]
+version = { attr = "colorpass.__version__" }
+
+[tool.setuptools.package-data]
+colorpass = ["templates/*.json"]
+
+# ---------------------------------------------------------------- 代码检查
+#
+# 日常：
+#     python -m ruff check colorpass tests     # 未使用导入/变量、未定义名、导入顺序
+#     python -m vulture colorpass --min-confidence 80
+#
+# 为什么要这几个规则（都是实际踩过的）：
+#   F401  未使用的导入 —— 删除功能后最容易留下的东西
+#   F841  赋值了但没用的局部变量 —— draftio 里留过 `mm = mask_map(draft)`
+#   F821  未定义名 —— 面板里的 fusion/bmd 是宿主注入的，已逐个标注 noqa
+#   I001  导入顺序 —— 只影响可读性，自动修
+#
+# 刻意**不启用**的规则：
+#   BLE001 / S110  面板必须吞掉所有异常（一层 UI 崩了就整窗没了），这是设计
+#   UP031          122 处 `"%s" % x` 是既有风格，换了没有收益，只会制造 diff
+#   C901           圈复杂度只在 panel/ 上卡阈值；send/write 是核心链路，
+#                  没有真实达芬奇可回归就不动
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [
+    "tests/_fixtures",
+]
+
+[tool.ruff.lint]
+select = ["F", "I"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# 面板只在达芬奇里跑，fusion / bmd 由宿主注入。
+"colorpass/panel/ColorPass.py" = ["F821"]
+
+[tool.vulture]
+min_confidence = 80
+paths = ["colorpass"]

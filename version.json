@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "notes": "· 1.0 正式版：Windows 与 macOS 双端功能对齐，送入 / 取回 / 写回全链路可用\n· macOS：支持剪映 11.7+ 加密草稿（进程内解密，密钥不出剪映进程）；首次送入会让剪映自保存并重启一次（约 10 秒）\n· Windows：变速段预渲染改按时间线画布编码，63 秒的 4K 段 34 秒完成；同一草稿改倍速后旧中转素材会自动清掉\n· 已知：macOS 暂不支持应用内更新，请手动下载新包覆盖；Windows 安装包未签名，首次运行会有 SmartScreen 提示",
+  "page": "https://github.com/1303234678-pixel/ColorPass/releases/tag/v1.0.0",
+  "assets": {
+    "windows": {
+      "url": "https://github.com/1303234678-pixel/ColorPass/releases/download/v1.0.0/ColorPass-Setup-1.0.0.exe",
+      "mirror": "",
+      "sha256": "8e08e59a6e1c0a62edcab6b0f896a06fa1859886b576765ba394a64d8dde2a4c",
+      "size": 37379335
+    },
+    "darwin": {
+      "url": "https://github.com/1303234678-pixel/ColorPass/releases/download/v1.0.0/ColorPass-1.0.0-mac.zip",
+      "mirror": "",
+      "sha256": "1532d16ea5416164a474144061aea86617d27ddef8337f1046380c8424b1a8ef",
+      "size": 676256,
+      "format": "zip",
+      "install": "解压后双击 installer/mac/install.command"
+    }
+  }
+}
